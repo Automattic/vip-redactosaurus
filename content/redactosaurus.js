@@ -530,10 +530,13 @@
     return processedWords.join(' ');
   }
 
-  function blurImage(element, blurAmount = '8px') {
-    if (element.tagName !== 'IMG') return;
+  function blurElement(element, blurAmount = '8px') {
     element.style.filter = `blur(${blurAmount})`;
-    element.style.transform = 'scale(1.02)';
+    // Images scale up so the blur does not reveal the backdrop at their edges.
+    // Text nodes must not scale or they shift the surrounding layout.
+    if (element.tagName === 'IMG') {
+      element.style.transform = 'scale(1.02)';
+    }
   }
 
   // === ELEMENT PROCESSING ===
@@ -696,7 +699,7 @@
 
   function processBlur(element, options) {
     const { blurAmount = '8px' } = options;
-    blurImage(element, blurAmount);
+    blurElement(element, blurAmount);
   }
 
   function processInjectCSS(options, transformationName) {

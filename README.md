@@ -81,7 +81,7 @@ Define regex patterns to extract the customer ID from dashboard URLs:
 }
 ```
 
-**`blur`** - Apply a CSS blur filter to images.
+**`blur`** - Apply a CSS blur filter to any element. Images are also scaled slightly so the blur does not reveal the backdrop at their edges.
 
 ```json
 {
