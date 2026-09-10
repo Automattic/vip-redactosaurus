@@ -4,7 +4,8 @@
     "maxRetries": 0,
     "debug": false,
     "showDemoIndicator": false,
-    "headlineMode": "replace"
+    "headlineMode": "replace",
+    "authorMode": "scramble"
   },
   "urlPatterns": {
     "parsely": {
@@ -52,8 +53,30 @@
       }
     },
     {
-      "name": "author_names",
+      "name": "authors_scramble",
+      "type": "scramble",
+      "enabled": true,
+      "enabledSetting": "authorMode",
+      "enabledValue": "scramble",
+      "selectors": [
+        "div.author a[href*='/authors/']",
+        "a[href*='/authors/']"
+      ],
+      "options": {
+        "preserveCase": true,
+        "preservePunctuation": true,
+        "preserveSpaces": true,
+        "preserveLength": true,
+        "preserveEnds": true,
+        "maxWordLength": 0
+      }
+    },
+    {
+      "name": "authors_replace",
       "type": "functionReplace",
+      "enabled": true,
+      "enabledSetting": "authorMode",
+      "enabledValue": "replace",
       "selectors": [
         "div.author a[href*='/authors/']",
         "a[href*='/authors/']"
@@ -90,6 +113,27 @@
       ],
       "options": {
         "blurAmount": "3px"
+      }
+    },
+    {
+      "name": "default_thumbnails",
+      "type": "defaultImage",
+      "selectors": [
+        "div.thumb img"
+      ],
+      "options": {
+        "minOccurrences": 3,
+        "replacement": "static"
+      }
+    },
+    {
+      "name": "factoid_figures",
+      "type": "blur",
+      "selectors": [
+        "div.factoid div.figure > div"
+      ],
+      "options": {
+        "blurAmount": "5px"
       }
     },
     {

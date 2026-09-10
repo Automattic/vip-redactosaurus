@@ -20,7 +20,9 @@ State flows: popup -> background (storage) -> content script reads on init and l
 
 ## Redaction Layers (order matters)
 
-1. **Global text sweep** (`sweepTextNodes`) - TreeWalker replaces the real customer domain with the fake domain across all text nodes. This is the broadest, most resilient layer.
+1. **Global text sweep** (`sweepTextNodes`) - TreeWalker replaces the real customer domain with the fake domain, and the brand token derived from that domain (`getBrandToken`) with the fake publisher name, across all text nodes. This is the broadest, most resilient layer. Domain patterns are applied before name patterns so the brand token cannot match inside an already-swapped domain.
+
+**The sweep must converge.** It re-runs every cycle over text it already rewrote, so any replacement whose own output still matches a redaction pattern will rewrite its own result forever and grow the text without bound. `buildSweepReplacements` drops such replacements and logs why. Never add a sweep replacement without checking its output against the active patterns.
 2. **Href-pattern selectors** - Transformations in `config.json` target elements by URL structure (e.g. `a[href*='/authors/']`), not CSS classes. CSS classes change with UI updates; URL structures do not.
 3. **Structural selectors** - Used only when href matching is not possible (images, publisher name badge, site picker input).
 
@@ -29,6 +31,8 @@ When adding new redaction targets, prefer layer 1 or 2. Only use layer 3 as a la
 ## Key Design Decisions
 
 **No CSS class selectors for content matching.** Parse.ly's class names change between deploys. Use `[href*='...']` patterns against their stable URL structure instead.
+
+**Never select on `data-v-*` attributes.** Parse.ly's Vue components carry scoped-style hashes like `data-v-95802abd`. These are build output and change whenever the component is recompiled, so they look stable in devtools and are not. The factoid selector uses `div.factoid div.figure > div` for this reason.
 
 **Paired headline/section data.** `content/articles.js` contains `{ headline, section }` objects. When a post row gets a fake headline, it gets the matching section from the same entry. Do not separate these into independent lists.
 
@@ -42,9 +46,11 @@ When adding new redaction targets, prefer layer 1 or 2. Only use layer 3 as a la
 
 All transformation rules are data-driven. To add a new redaction target, add an entry to the `transformations` array. Do not add processing logic inline in `redactosaurus.js` for one-off cases.
 
-Transformation types: `functionReplace`, `scramble`, `blur`. Each has an `options` object specific to its type.
+Transformation types: `functionReplace`, `scramble`, `blur`, `defaultImage`. Each has an `options` object specific to its type.
 
-Conditional transformations use `enabledSetting` + `enabledValue` to toggle based on stored settings (e.g. headline mode).
+Types listed in `CONTINUOUS_TYPES` are never marked processed and so re-run every cycle. Use this only when the trigger condition can become true after the first pass — `defaultImage` needs it because an image only looks repeated once enough rows have loaded. Everything else must be marked processed or it will fight the app on every tick.
+
+Conditional transformations use `enabledSetting` + `enabledValue` to toggle based on stored settings. `MODE_SETTINGS` in `redactosaurus.js` lists which settings the popup can override (`headlineMode`, `authorMode`); stored values are applied over the `config.json` defaults on load. Popup mode dropdowns are wired by a `data-setting` attribute and share the single `updateMode` message — do not add a per-setting message action.
 
 ## Adding Replacement Functions
 

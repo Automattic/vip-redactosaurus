@@ -3,16 +3,19 @@
 
 console.log('[VIP Redactosaurus] Background service worker started');
 
+const MODE_DEFAULTS = { headlineMode: 'replace', authorMode: 'scramble' };
+const MODE_SETTINGS = Object.keys(MODE_DEFAULTS);
+
 // Handle extension installation
 chrome.runtime.onInstalled.addListener((details) => {
   console.log('[VIP Redactosaurus] Extension installed/updated:', details.reason);
   
   if (details.reason === 'install') {
     // Set default enabled state
-    chrome.storage.local.set({ 
+    chrome.storage.local.set({
       enabled: true,
       wakeLockEnabled: true,
-      headlineMode: 'replace',
+      ...MODE_DEFAULTS,
       publisherName: '',
       publisherDomain: '',
       installDate: Date.now()
@@ -47,8 +50,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       handleUpdateWakeLock(request, sendResponse);
       return true; // Keep message channel open
 
-    case 'updateHeadlineMode':
-      handleUpdateHeadlineMode(request, sendResponse);
+    case 'updateMode':
+      handleUpdateMode(request, sendResponse);
       return true;
 
     case 'updatePublisher':
@@ -105,13 +108,14 @@ async function handleToggle(request, sendResponse) {
 // Handle status requests from popup
 async function handleGetStatus(sendResponse) {
   try {
-    const result = await chrome.storage.local.get(['enabled', 'wakeLockEnabled', 'headlineMode', 'publisherName', 'publisherDomain', 'installDate']);
-    
-    sendResponse({ 
+    const result = await chrome.storage.local.get(['enabled', 'wakeLockEnabled', ...MODE_SETTINGS, 'publisherName', 'publisherDomain', 'installDate']);
+
+    sendResponse({
       success: true,
       enabled: result.enabled !== false,
       wakeLockEnabled: result.wakeLockEnabled || false,
-      headlineMode: result.headlineMode || 'replace',
+      headlineMode: result.headlineMode || MODE_DEFAULTS.headlineMode,
+      authorMode: result.authorMode || MODE_DEFAULTS.authorMode,
       publisherName: result.publisherName || '',
       publisherDomain: result.publisherDomain || '',
       installDate: result.installDate,
@@ -125,7 +129,7 @@ async function handleGetStatus(sendResponse) {
       error: error.message,
       enabled: true, // Safe default
       wakeLockEnabled: false,
-      headlineMode: 'replace'
+      ...MODE_DEFAULTS
     });
   }
 }
@@ -175,25 +179,26 @@ async function handleUpdateWakeLock(request, sendResponse) {
   }
 }
 
-// Handle headline mode update requests
-async function handleUpdateHeadlineMode(request, sendResponse) {
+// Handle mode update requests (headlineMode, authorMode)
+async function handleUpdateMode(request, sendResponse) {
   try {
-    const headlineMode = request.mode;
-    
-    // Store the new headline mode
-    await chrome.storage.local.set({ headlineMode });
-    console.log('[VIP Redactosaurus] Headline mode updated to:', headlineMode);
-    
-    sendResponse({ 
-      success: true, 
-      headlineMode: headlineMode
-    });
-    
+    const { setting, mode } = request;
+
+    if (!MODE_SETTINGS.includes(setting)) {
+      sendResponse({ success: false, error: `Unknown mode setting: ${setting}` });
+      return;
+    }
+
+    await chrome.storage.local.set({ [setting]: mode });
+    console.log(`[VIP Redactosaurus] ${setting} updated to:`, mode);
+
+    sendResponse({ success: true, setting, mode });
+
   } catch (error) {
-    console.error('[VIP Redactosaurus] Error updating headline mode:', error);
-    sendResponse({ 
-      success: false, 
-      error: error.message 
+    console.error('[VIP Redactosaurus] Error updating mode:', error);
+    sendResponse({
+      success: false,
+      error: error.message
     });
   }
 }

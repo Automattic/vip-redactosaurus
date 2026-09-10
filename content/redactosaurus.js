@@ -15,10 +15,15 @@
   let detectedCustomer = null;
   let lastDetectedUrl = null;
   let previousFakeDomain = null;
+  let previousFakeName = null;
+  const reportedSweepIssues = new Set();
   let processingCounter = 0;
   let articles = null;
   let articleIndex = 0;
   let elementArticleMap = new Map();
+  let staticImageDataUrl = null;
+  let repeatedImageCache = { key: null, srcs: null };
+  const originalImageSrc = new WeakMap();
 
   // === UTILITY FUNCTIONS ===
   
@@ -35,6 +40,9 @@
   // === FAKE PUBLISHER IDENTITIES ===
 
   let FAKE_IDENTITY = { name: 'Demo Network', domain: 'demosite.test' };
+
+  // Settings the popup can override at runtime; stored values win over config.json defaults.
+  const MODE_SETTINGS = ['headlineMode', 'authorMode'];
 
   function generateFakeIdentity() {
     return FAKE_IDENTITY;
@@ -525,13 +533,69 @@
     return processedWords.join(' ');
   }
 
-  function blurImage(element, blurAmount = '8px') {
-    if (element.tagName !== 'IMG') return;
+  // Greyscale noise, generated once and shared. A publisher's fallback
+  // thumbnail stays recognizable through a blur because its silhouette and
+  // colour survive, so it has to be replaced outright rather than obscured.
+  function getStaticImageDataUrl() {
+    if (staticImageDataUrl) return staticImageDataUrl;
+
+    const size = 96;
+    const canvas = document.createElement('canvas');
+    canvas.width = size;
+    canvas.height = size;
+
+    const context = canvas.getContext('2d');
+    const noise = context.createImageData(size, size);
+    for (let i = 0; i < noise.data.length; i += 4) {
+      const level = Math.floor(Math.random() * 256);
+      noise.data[i] = level;
+      noise.data[i + 1] = level;
+      noise.data[i + 2] = level;
+      noise.data[i + 3] = 255;
+    }
+    context.putImageData(noise, 0, 0);
+
+    staticImageDataUrl = canvas.toDataURL('image/png');
+    return staticImageDataUrl;
+  }
+
+  // A default thumbnail is whichever image repeats across rows: real article
+  // images are distinct, the publisher's fallback is not. Counting is keyed on
+  // the original src so already-replaced images still count toward their group.
+  function getRepeatedImageSrcs(selector, minOccurrences) {
+    const cacheKey = `${processingCounter}:${selector}:${minOccurrences}`;
+    if (repeatedImageCache.key === cacheKey) return repeatedImageCache.srcs;
+
+    const counts = new Map();
+    document.querySelectorAll(selector).forEach(image => {
+      const src = originalImageSrc.get(image) ?? image.getAttribute('src');
+      if (!src) return;
+      counts.set(src, (counts.get(src) || 0) + 1);
+    });
+
+    const srcs = new Set(
+      Array.from(counts).filter(([, count]) => count >= minOccurrences).map(([src]) => src)
+    );
+
+    repeatedImageCache = { key: cacheKey, srcs };
+    return srcs;
+  }
+
+  function blurElement(element, blurAmount = '8px') {
     element.style.filter = `blur(${blurAmount})`;
-    element.style.transform = 'scale(1.02)';
+    // Images scale up so the blur does not reveal the backdrop at their edges.
+    // Text nodes must not scale or they shift the surrounding layout.
+    if (element.tagName === 'IMG') {
+      element.style.transform = 'scale(1.02)';
+    }
   }
 
   // === ELEMENT PROCESSING ===
+
+  // Types that are never marked done and so are re-checked every cycle. Their
+  // trigger can become true later (a thumbnail only looks repeated once enough
+  // rows have loaded) and the app can re-render over an applied result.
+  const CONTINUOUS_TYPES = new Set(['defaultImage']);
 
   async function processElement(element, transformation) {
     const { type, options = {}, name } = transformation;
@@ -572,6 +636,10 @@
           processBlur(element, options);
           break;
 
+        case 'defaultImage':
+          processDefaultImage(element, options, transformation.selectors);
+          break;
+
         case 'sensitiveText':
           processSensitiveText(element, options);
           break;
@@ -581,7 +649,9 @@
           return;
       }
 
-      markAsProcessed(element, name);
+      if (!CONTINUOUS_TYPES.has(type)) {
+        markAsProcessed(element, name);
+      }
       log(`✅ Completed "${name}" (${type}) on ${elementSig}`);
 
     } catch (err) {
@@ -691,7 +761,33 @@
 
   function processBlur(element, options) {
     const { blurAmount = '8px' } = options;
-    blurImage(element, blurAmount);
+    blurElement(element, blurAmount);
+  }
+
+  function processDefaultImage(element, options, selectors) {
+    if (element.tagName !== 'IMG') return;
+
+    const { minOccurrences = 3, replacement = 'static' } = options;
+    const replacementSrc = replacement === 'static'
+      ? getStaticImageDataUrl()
+      : chrome.runtime.getURL(replacement);
+
+    if (element.getAttribute('src') === replacementSrc) return;
+
+    if (!originalImageSrc.has(element)) {
+      originalImageSrc.set(element, element.getAttribute('src'));
+    }
+
+    const repeated = getRepeatedImageSrcs(selectors.join(', '), minOccurrences);
+    if (!repeated.has(originalImageSrc.get(element))) return;
+
+    // srcset would override src, and the blur is redundant once the image is
+    // replaced with noise that carries no identity to hide.
+    element.removeAttribute('srcset');
+    element.src = replacementSrc;
+    element.style.filter = '';
+    element.style.transform = '';
+    log(`Replaced default thumbnail: ${originalImageSrc.get(element)}`);
   }
 
   function processInjectCSS(options, transformationName) {
@@ -799,20 +895,83 @@
 
   // === GLOBAL TEXT SWEEP ===
 
+  function escapeRegex(text) {
+    return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
+
+  // The customer's brand name is not in the URL, but it is almost always the
+  // domain's second-level label ("gazette.com" -> "gazette"), which is what
+  // appears in header labels like "The Gazette Sites". Tokens shorter than
+  // three characters are too collision-prone to sweep.
+  function getBrandToken(realId) {
+    const label = realId.replace(/^www\./i, '').split('.')[0];
+    return label.length >= 3 ? label : null;
+  }
+
+  // A sweep runs every cycle over text it has already rewritten, so every
+  // replacement must converge: its own output must not match any active
+  // pattern. Otherwise it rewrites its own result forever and the text grows
+  // without bound (brand token "gazette" replaced by "The Gazette" yields
+  // "The The The ..."). Non-converging replacements are dropped, not applied.
+  function buildSweepReplacements(realId, fakeDomain, fakeName) {
+    // Domains are swept before names so a brand token cannot match inside a
+    // domain that was already swapped.
+    const domainPatterns = [escapeRegex(realId)];
+    if (previousFakeDomain && previousFakeDomain !== fakeDomain) {
+      domainPatterns.push(escapeRegex(previousFakeDomain));
+    }
+
+    const candidates = [
+      { label: 'customer domain', patterns: domainPatterns, value: fakeDomain }
+    ];
+
+    const namePatterns = [];
+    const brandToken = getBrandToken(realId);
+    if (brandToken) {
+      namePatterns.push(`\\b${escapeRegex(brandToken)}\\b`);
+    }
+    if (previousFakeName && previousFakeName !== fakeName) {
+      namePatterns.push(escapeRegex(previousFakeName));
+    }
+    if (namePatterns.length > 0) {
+      candidates.push({ label: 'customer name', patterns: namePatterns, value: fakeName });
+    }
+
+    const allPatterns = new RegExp(candidates.flatMap(c => c.patterns).join('|'), 'i');
+
+    return candidates.filter(candidate => {
+      if (!allPatterns.test(candidate.value)) return true;
+      reportSweepIssue(
+        `Sweep for ${candidate.label} disabled: the replacement "${candidate.value}" still matches a redaction pattern ` +
+        `(customer id "${realId}"${brandToken ? `, brand token "${brandToken}"` : ''}), so applying it would rewrite ` +
+        `its own output on every cycle. Pick a publisher name and domain that do not contain either.`
+      );
+      return false;
+    });
+  }
+
+  function reportSweepIssue(message) {
+    if (reportedSweepIssues.has(message)) return;
+    reportedSweepIssues.add(message);
+    error(message);
+  }
+
   function sweepTextNodes() {
     if (!detectedCustomer || !isEnabled || !document.body) return;
 
     const realId = detectedCustomer.realId;
     if (!realId) return;
 
-    const fakeDomain = detectedCustomer.domain;
-    const escape = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const candidates = buildSweepReplacements(realId, detectedCustomer.domain, detectedCustomer.name);
+    if (candidates.length === 0) return;
 
-    const patterns = [escape(realId)];
-    if (previousFakeDomain && previousFakeDomain !== fakeDomain) {
-      patterns.push(escape(previousFakeDomain));
-    }
-    const regex = new RegExp(patterns.join('|'), 'gi');
+    const replacements = candidates.map(({ patterns, value }) => ({
+      regex: new RegExp(patterns.join('|'), 'gi'),
+      value
+    }));
+
+    // Non-global so it has no lastIndex state; lets the walk skip untouched nodes.
+    const anyPattern = new RegExp(candidates.flatMap(c => c.patterns).join('|'), 'i');
 
     const walker = document.createTreeWalker(
       document.body,
@@ -830,12 +989,17 @@
     let node;
     while (node = walker.nextNode()) {
       const text = node.textContent;
-      if (!regex.test(text)) continue;
-      regex.lastIndex = 0;
-      node.textContent = text.replace(regex, fakeDomain);
+      if (!anyPattern.test(text)) continue;
+
+      let swept = text;
+      replacements.forEach(({ regex, value }) => {
+        swept = swept.replace(regex, value);
+      });
+      if (swept !== text) node.textContent = swept;
     }
 
-    previousFakeDomain = fakeDomain;
+    previousFakeDomain = detectedCustomer.domain;
+    previousFakeName = detectedCustomer.name;
   }
 
   // === CONTENT HIDING & REVEALING ===
@@ -1141,11 +1305,14 @@
 
   async function loadExtensionState() {
     try {
-      const result = await chrome.storage.local.get(['enabled', 'publisherName', 'publisherDomain']);
+      const result = await chrome.storage.local.get(['enabled', 'publisherName', 'publisherDomain', ...MODE_SETTINGS]);
       isEnabled = result.enabled !== false;
       if (result.publisherName) FAKE_IDENTITY.name = result.publisherName;
       if (result.publisherDomain) FAKE_IDENTITY.domain = result.publisherDomain;
-      log('Extension state loaded:', { isEnabled, identity: FAKE_IDENTITY });
+      MODE_SETTINGS.forEach(key => {
+        if (result[key]) config.settings[key] = result[key];
+      });
+      log('Extension state loaded:', { isEnabled, identity: FAKE_IDENTITY, settings: config.settings });
     } catch (err) {
       error('Failed to load extension state:', err);
       isEnabled = true;
@@ -1272,10 +1439,10 @@
         });
         break;
 
-      case 'updateHeadlineMode':
+      case 'updateMode':
         if (config && config.settings) {
-          config.settings.headlineMode = request.mode;
-          log(`Headline mode updated to: ${request.mode}`);
+          config.settings[request.setting] = request.mode;
+          log(`${request.setting} updated to: ${request.mode}`);
           resetProcessedElements();
 
           if (isEnabled) {
@@ -1283,8 +1450,8 @@
             await processAllElements();
             setTimeout(revealAnonymizedContent, 300);
           }
-          
-          sendResponse({ success: true, headlineMode: request.mode });
+
+          sendResponse({ success: true, setting: request.setting, mode: request.mode });
         } else {
           sendResponse({ success: false, error: 'Config not loaded' });
         }
@@ -1292,6 +1459,8 @@
 
       case 'updatePublisher':
         previousFakeDomain = FAKE_IDENTITY.domain;
+        previousFakeName = FAKE_IDENTITY.name;
+        reportedSweepIssues.clear();
 
         FAKE_IDENTITY.name = request.name || 'Demo Network';
         FAKE_IDENTITY.domain = request.domain || 'demosite.test';

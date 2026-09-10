@@ -6,7 +6,9 @@ A Chrome extension that anonymizes Parse.ly dashboards before they render, enabl
 
 Redaction happens in three layers, from broad to specific:
 
-1. **Global text sweep** - A `TreeWalker` replaces every occurrence of the detected customer domain (e.g. `arstechnica.com`) with a fake domain (`demosite.test` by default) across all text nodes.
+1. **Global text sweep** - A `TreeWalker` replaces every occurrence of the detected customer domain (e.g. `gazette.com`) with a fake domain (`demosite.test` by default) and every occurrence of the brand token derived from that domain (`gazette`) with the fake publisher name, across all text nodes. The brand token catches header labels the app builds from the account name, such as "The Gazette Sites - gazette.com".
+
+   Two limits apply. The token only matches when the brand renders as one word (`gazette` matches "The Gazette", but `dailyplanet` will not match "Daily Planet"). And the publisher name and domain you configure must not contain the customer id or brand token — a replacement that matches its own output would rewrite it on every cycle, so the sweep drops it and logs an error instead.
 2. **Href-pattern selectors** - Content like authors (`a[href*='/authors/']`) and sections (`a[href*='/sections/']`) is matched by URL structure rather than CSS classes, making it resilient to UI changes.
 3. **Structural selectors** - A few specific selectors handle elements where href matching isn't possible (image thumbnails, publisher name, site picker).
 
@@ -24,10 +26,11 @@ The popup provides these controls:
 
 - **Anonymization** toggle (on/off)
 - **Keep screen awake** toggle (for live demos)
-- **Publisher name** and **Publisher domain** (defaults: "Demo Network" / "demosite.test")
+- **Show publisher name as** and **Show domain as** — the fake identity to display, not the customer values to look for (defaults: "Demo Network" / "demosite.test")
 - **Headline mode** (replace with generated headlines, or scramble existing ones)
+- **Author mode** (scramble existing names, or replace with generated ones)
 
-Publisher name and domain are persisted and applied live without reloading.
+All popup settings are persisted and applied live without reloading. Author mode defaults to scramble: generated names still read as plausible real people, which looks like leaked customer data in a demo even when it is not.
 
 ## Configuration
 
@@ -52,7 +55,7 @@ Define regex patterns to extract the customer ID from dashboard URLs:
 
 ```json
 {
-  "name": "author_names",
+  "name": "authors_replace",
   "type": "functionReplace",
   "selectors": ["a[href*='/authors/']"],
   "options": {
@@ -78,7 +81,7 @@ Define regex patterns to extract the customer ID from dashboard URLs:
 }
 ```
 
-**`blur`** - Apply a CSS blur filter to images.
+**`blur`** - Apply a CSS blur filter to any element. Images are also scaled slightly so the blur does not reveal the backdrop at their edges.
 
 ```json
 {
@@ -88,6 +91,24 @@ Define regex patterns to extract the customer ID from dashboard URLs:
   "options": { "blurAmount": "3px" }
 }
 ```
+
+**`defaultImage`** - Replace a publisher's fallback thumbnail outright. A blur is not enough for these: the same image repeats down the page, and its silhouette and colour stay recognizable. The default is identified by repetition — real article images are distinct, a fallback is not — so nothing customer-specific is hardcoded. Any image whose src appears at least `minOccurrences` times is swapped and un-blurred.
+
+```json
+{
+  "name": "default_thumbnails",
+  "type": "defaultImage",
+  "selectors": ["div.thumb img"],
+  "options": {
+    "minOccurrences": 3,
+    "replacement": "static"
+  }
+}
+```
+
+`replacement` is either `"static"` (generated greyscale noise, no asset required) or a path to a bundled image such as `"assets/logo.png"`, which must be listed in the manifest's `web_accessible_resources`. Place this transformation after any `blur` covering the same selector.
+
+Two limits: a page showing fewer than `minOccurrences` copies leaves the default thumbnail blurred but unreplaced, and a genuinely repeated article image would be treated as a default.
 
 ### Available Replacement Functions
 
@@ -100,7 +121,7 @@ Define regex patterns to extract the customer ID from dashboard URLs:
 
 ### Conditional Transformations
 
-Transformations can be toggled by a setting value. Headlines use this to switch between replace and scramble modes:
+Transformations can be toggled by a setting value. Headlines (`headlineMode`) and author names (`authorMode`) use this to switch between replace and scramble modes from the popup:
 
 ```json
 {

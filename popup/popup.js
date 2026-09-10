@@ -1,7 +1,7 @@
 document.addEventListener('DOMContentLoaded', function() {
   const toggleSwitch = document.getElementById('toggleSwitch');
   const wakeLockSwitch = document.getElementById('wakeLockSwitch');
-  const headlineModeSelect = document.getElementById('headlineModeSelect');
+  const modeSelects = document.querySelectorAll('select[data-setting]');
   const publisherNameInput = document.getElementById('publisherName');
   const publisherDomainInput = document.getElementById('publisherDomain');
   const status = document.getElementById('status');
@@ -14,7 +14,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
   toggleSwitch.addEventListener('click', handleToggle);
   wakeLockSwitch.addEventListener('click', handleWakeLockToggle);
-  headlineModeSelect.addEventListener('change', handleHeadlineModeChange);
+  modeSelects.forEach(select => select.addEventListener('change', handleModeChange));
   publisherNameInput.addEventListener('change', handlePublisherChange);
   publisherDomainInput.addEventListener('change', handlePublisherChange);
 
@@ -34,7 +34,10 @@ document.addEventListener('DOMContentLoaded', function() {
       const response = await sendMessage({ action: 'getStatus' });
       isEnabled = response.enabled || false;
       wakeLockEnabled = response.wakeLockEnabled || false;
-      headlineModeSelect.value = response.headlineMode || 'replace';
+      modeSelects.forEach(select => {
+        const value = response[select.dataset.setting];
+        if (value) select.value = value;
+      });
       publisherNameInput.value = response.publisherName || '';
       publisherDomainInput.value = response.publisherDomain || '';
       updateUI();
@@ -76,14 +79,15 @@ document.addEventListener('DOMContentLoaded', function() {
     } catch (e) { /* ignore */ }
   }
 
-  async function handleHeadlineModeChange(event) {
+  async function handleModeChange(event) {
+    const setting = event.target.dataset.setting;
     const mode = event.target.value;
-    await sendMessage({ action: 'updateHeadlineMode', mode });
+    await sendMessage({ action: 'updateMode', setting, mode });
 
     try {
       const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
       if (tabs[0]) {
-        chrome.tabs.sendMessage(tabs[0].id, { action: 'updateHeadlineMode', mode }).catch(() => {});
+        chrome.tabs.sendMessage(tabs[0].id, { action: 'updateMode', setting, mode }).catch(() => {});
       }
     } catch (e) { /* ignore */ }
   }
