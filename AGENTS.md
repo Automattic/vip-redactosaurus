@@ -44,7 +44,7 @@ All transformation rules are data-driven. To add a new redaction target, add an 
 
 Transformation types: `functionReplace`, `scramble`, `blur`. Each has an `options` object specific to its type.
 
-Conditional transformations use `enabledSetting` + `enabledValue` to toggle based on stored settings (e.g. headline mode).
+Conditional transformations use `enabledSetting` + `enabledValue` to toggle based on stored settings. `MODE_SETTINGS` in `redactosaurus.js` lists which settings the popup can override (`headlineMode`, `authorMode`); stored values are applied over the `config.json` defaults on load. Popup mode dropdowns are wired by a `data-setting` attribute and share the single `updateMode` message — do not add a per-setting message action.
 
 ## Adding Replacement Functions
 

@@ -165,9 +165,16 @@
   <div class="section">
     <div class="field">
       <label>Headline mode</label>
-      <select id="headlineModeSelect">
+      <select data-setting="headlineMode">
         <option value="replace">Replace with random headlines</option>
         <option value="scramble">Scramble existing headlines</option>
+      </select>
+    </div>
+    <div class="field">
+      <label>Author mode</label>
+      <select data-setting="authorMode">
+        <option value="scramble">Scramble existing names</option>
+        <option value="replace">Replace with random names</option>
       </select>
     </div>
   </div>

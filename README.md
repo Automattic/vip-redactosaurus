@@ -26,8 +26,9 @@ The popup provides these controls:
 - **Keep screen awake** toggle (for live demos)
 - **Publisher name** and **Publisher domain** (defaults: "Demo Network" / "demosite.test")
 - **Headline mode** (replace with generated headlines, or scramble existing ones)
+- **Author mode** (scramble existing names, or replace with generated ones)
 
-Publisher name and domain are persisted and applied live without reloading.
+All popup settings are persisted and applied live without reloading. Author mode defaults to scramble: generated names still read as plausible real people, which looks like leaked customer data in a demo even when it is not.
 
 ## Configuration
 
@@ -52,7 +53,7 @@ Define regex patterns to extract the customer ID from dashboard URLs:
 
 ```json
 {
-  "name": "author_names",
+  "name": "authors_replace",
   "type": "functionReplace",
   "selectors": ["a[href*='/authors/']"],
   "options": {
@@ -100,7 +101,7 @@ Define regex patterns to extract the customer ID from dashboard URLs:
 
 ### Conditional Transformations
 
-Transformations can be toggled by a setting value. Headlines use this to switch between replace and scramble modes:
+Transformations can be toggled by a setting value. Headlines (`headlineMode`) and author names (`authorMode`) use this to switch between replace and scramble modes from the popup:
 
 ```json
 {

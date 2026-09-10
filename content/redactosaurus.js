@@ -36,6 +36,9 @@
 
   let FAKE_IDENTITY = { name: 'Demo Network', domain: 'demosite.test' };
 
+  // Settings the popup can override at runtime; stored values win over config.json defaults.
+  const MODE_SETTINGS = ['headlineMode', 'authorMode'];
+
   function generateFakeIdentity() {
     return FAKE_IDENTITY;
   }
@@ -1141,11 +1144,14 @@
 
   async function loadExtensionState() {
     try {
-      const result = await chrome.storage.local.get(['enabled', 'publisherName', 'publisherDomain']);
+      const result = await chrome.storage.local.get(['enabled', 'publisherName', 'publisherDomain', ...MODE_SETTINGS]);
       isEnabled = result.enabled !== false;
       if (result.publisherName) FAKE_IDENTITY.name = result.publisherName;
       if (result.publisherDomain) FAKE_IDENTITY.domain = result.publisherDomain;
-      log('Extension state loaded:', { isEnabled, identity: FAKE_IDENTITY });
+      MODE_SETTINGS.forEach(key => {
+        if (result[key]) config.settings[key] = result[key];
+      });
+      log('Extension state loaded:', { isEnabled, identity: FAKE_IDENTITY, settings: config.settings });
     } catch (err) {
       error('Failed to load extension state:', err);
       isEnabled = true;
@@ -1272,10 +1278,10 @@
         });
         break;
 
-      case 'updateHeadlineMode':
+      case 'updateMode':
         if (config && config.settings) {
-          config.settings.headlineMode = request.mode;
-          log(`Headline mode updated to: ${request.mode}`);
+          config.settings[request.setting] = request.mode;
+          log(`${request.setting} updated to: ${request.mode}`);
           resetProcessedElements();
 
           if (isEnabled) {
@@ -1283,8 +1289,8 @@
             await processAllElements();
             setTimeout(revealAnonymizedContent, 300);
           }
-          
-          sendResponse({ success: true, headlineMode: request.mode });
+
+          sendResponse({ success: true, setting: request.setting, mode: request.mode });
         } else {
           sendResponse({ success: false, error: 'Config not loaded' });
         }
