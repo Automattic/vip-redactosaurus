@@ -15,6 +15,8 @@
   let detectedCustomer = null;
   let lastDetectedUrl = null;
   let previousFakeDomain = null;
+  let previousFakeName = null;
+  const reportedSweepIssues = new Set();
   let processingCounter = 0;
   let articles = null;
   let articleIndex = 0;
@@ -802,20 +804,83 @@
 
   // === GLOBAL TEXT SWEEP ===
 
+  function escapeRegex(text) {
+    return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
+
+  // The customer's brand name is not in the URL, but it is almost always the
+  // domain's second-level label ("gazette.com" -> "gazette"), which is what
+  // appears in header labels like "The Gazette Sites". Tokens shorter than
+  // three characters are too collision-prone to sweep.
+  function getBrandToken(realId) {
+    const label = realId.replace(/^www\./i, '').split('.')[0];
+    return label.length >= 3 ? label : null;
+  }
+
+  // A sweep runs every cycle over text it has already rewritten, so every
+  // replacement must converge: its own output must not match any active
+  // pattern. Otherwise it rewrites its own result forever and the text grows
+  // without bound (brand token "gazette" replaced by "The Gazette" yields
+  // "The The The ..."). Non-converging replacements are dropped, not applied.
+  function buildSweepReplacements(realId, fakeDomain, fakeName) {
+    // Domains are swept before names so a brand token cannot match inside a
+    // domain that was already swapped.
+    const domainPatterns = [escapeRegex(realId)];
+    if (previousFakeDomain && previousFakeDomain !== fakeDomain) {
+      domainPatterns.push(escapeRegex(previousFakeDomain));
+    }
+
+    const candidates = [
+      { label: 'customer domain', patterns: domainPatterns, value: fakeDomain }
+    ];
+
+    const namePatterns = [];
+    const brandToken = getBrandToken(realId);
+    if (brandToken) {
+      namePatterns.push(`\\b${escapeRegex(brandToken)}\\b`);
+    }
+    if (previousFakeName && previousFakeName !== fakeName) {
+      namePatterns.push(escapeRegex(previousFakeName));
+    }
+    if (namePatterns.length > 0) {
+      candidates.push({ label: 'customer name', patterns: namePatterns, value: fakeName });
+    }
+
+    const allPatterns = new RegExp(candidates.flatMap(c => c.patterns).join('|'), 'i');
+
+    return candidates.filter(candidate => {
+      if (!allPatterns.test(candidate.value)) return true;
+      reportSweepIssue(
+        `Sweep for ${candidate.label} disabled: the replacement "${candidate.value}" still matches a redaction pattern ` +
+        `(customer id "${realId}"${brandToken ? `, brand token "${brandToken}"` : ''}), so applying it would rewrite ` +
+        `its own output on every cycle. Pick a publisher name and domain that do not contain either.`
+      );
+      return false;
+    });
+  }
+
+  function reportSweepIssue(message) {
+    if (reportedSweepIssues.has(message)) return;
+    reportedSweepIssues.add(message);
+    error(message);
+  }
+
   function sweepTextNodes() {
     if (!detectedCustomer || !isEnabled || !document.body) return;
 
     const realId = detectedCustomer.realId;
     if (!realId) return;
 
-    const fakeDomain = detectedCustomer.domain;
-    const escape = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const candidates = buildSweepReplacements(realId, detectedCustomer.domain, detectedCustomer.name);
+    if (candidates.length === 0) return;
 
-    const patterns = [escape(realId)];
-    if (previousFakeDomain && previousFakeDomain !== fakeDomain) {
-      patterns.push(escape(previousFakeDomain));
-    }
-    const regex = new RegExp(patterns.join('|'), 'gi');
+    const replacements = candidates.map(({ patterns, value }) => ({
+      regex: new RegExp(patterns.join('|'), 'gi'),
+      value
+    }));
+
+    // Non-global so it has no lastIndex state; lets the walk skip untouched nodes.
+    const anyPattern = new RegExp(candidates.flatMap(c => c.patterns).join('|'), 'i');
 
     const walker = document.createTreeWalker(
       document.body,
@@ -833,12 +898,17 @@
     let node;
     while (node = walker.nextNode()) {
       const text = node.textContent;
-      if (!regex.test(text)) continue;
-      regex.lastIndex = 0;
-      node.textContent = text.replace(regex, fakeDomain);
+      if (!anyPattern.test(text)) continue;
+
+      let swept = text;
+      replacements.forEach(({ regex, value }) => {
+        swept = swept.replace(regex, value);
+      });
+      if (swept !== text) node.textContent = swept;
     }
 
-    previousFakeDomain = fakeDomain;
+    previousFakeDomain = detectedCustomer.domain;
+    previousFakeName = detectedCustomer.name;
   }
 
   // === CONTENT HIDING & REVEALING ===
@@ -1298,6 +1368,8 @@
 
       case 'updatePublisher':
         previousFakeDomain = FAKE_IDENTITY.domain;
+        previousFakeName = FAKE_IDENTITY.name;
+        reportedSweepIssues.clear();
 
         FAKE_IDENTITY.name = request.name || 'Demo Network';
         FAKE_IDENTITY.domain = request.domain || 'demosite.test';

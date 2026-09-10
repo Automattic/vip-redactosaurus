@@ -20,7 +20,9 @@ State flows: popup -> background (storage) -> content script reads on init and l
 
 ## Redaction Layers (order matters)
 
-1. **Global text sweep** (`sweepTextNodes`) - TreeWalker replaces the real customer domain with the fake domain across all text nodes. This is the broadest, most resilient layer.
+1. **Global text sweep** (`sweepTextNodes`) - TreeWalker replaces the real customer domain with the fake domain, and the brand token derived from that domain (`getBrandToken`) with the fake publisher name, across all text nodes. This is the broadest, most resilient layer. Domain patterns are applied before name patterns so the brand token cannot match inside an already-swapped domain.
+
+**The sweep must converge.** It re-runs every cycle over text it already rewrote, so any replacement whose own output still matches a redaction pattern will rewrite its own result forever and grow the text without bound. `buildSweepReplacements` drops such replacements and logs why. Never add a sweep replacement without checking its output against the active patterns.
 2. **Href-pattern selectors** - Transformations in `config.json` target elements by URL structure (e.g. `a[href*='/authors/']`), not CSS classes. CSS classes change with UI updates; URL structures do not.
 3. **Structural selectors** - Used only when href matching is not possible (images, publisher name badge, site picker input).
 

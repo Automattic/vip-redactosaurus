@@ -6,7 +6,9 @@ A Chrome extension that anonymizes Parse.ly dashboards before they render, enabl
 
 Redaction happens in three layers, from broad to specific:
 
-1. **Global text sweep** - A `TreeWalker` replaces every occurrence of the detected customer domain (e.g. `arstechnica.com`) with a fake domain (`demosite.test` by default) across all text nodes.
+1. **Global text sweep** - A `TreeWalker` replaces every occurrence of the detected customer domain (e.g. `gazette.com`) with a fake domain (`demosite.test` by default) and every occurrence of the brand token derived from that domain (`gazette`) with the fake publisher name, across all text nodes. The brand token catches header labels the app builds from the account name, such as "The Gazette Sites - gazette.com".
+
+   Two limits apply. The token only matches when the brand renders as one word (`gazette` matches "The Gazette", but `dailyplanet` will not match "Daily Planet"). And the publisher name and domain you configure must not contain the customer id or brand token — a replacement that matches its own output would rewrite it on every cycle, so the sweep drops it and logs an error instead.
 2. **Href-pattern selectors** - Content like authors (`a[href*='/authors/']`) and sections (`a[href*='/sections/']`) is matched by URL structure rather than CSS classes, making it resilient to UI changes.
 3. **Structural selectors** - A few specific selectors handle elements where href matching isn't possible (image thumbnails, publisher name, site picker).
 
