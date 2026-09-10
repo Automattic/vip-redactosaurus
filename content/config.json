@@ -116,6 +116,17 @@
       }
     },
     {
+      "name": "default_thumbnails",
+      "type": "defaultImage",
+      "selectors": [
+        "div.thumb img"
+      ],
+      "options": {
+        "minOccurrences": 3,
+        "replacement": "static"
+      }
+    },
+    {
       "name": "publisher_name",
       "type": "functionReplace",
       "selectors": [

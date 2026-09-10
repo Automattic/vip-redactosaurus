@@ -92,6 +92,24 @@ Define regex patterns to extract the customer ID from dashboard URLs:
 }
 ```
 
+**`defaultImage`** - Replace a publisher's fallback thumbnail outright. A blur is not enough for these: the same image repeats down the page, and its silhouette and colour stay recognizable. The default is identified by repetition — real article images are distinct, a fallback is not — so nothing customer-specific is hardcoded. Any image whose src appears at least `minOccurrences` times is swapped and un-blurred.
+
+```json
+{
+  "name": "default_thumbnails",
+  "type": "defaultImage",
+  "selectors": ["div.thumb img"],
+  "options": {
+    "minOccurrences": 3,
+    "replacement": "static"
+  }
+}
+```
+
+`replacement` is either `"static"` (generated greyscale noise, no asset required) or a path to a bundled image such as `"assets/logo.png"`, which must be listed in the manifest's `web_accessible_resources`. Place this transformation after any `blur` covering the same selector.
+
+Two limits: a page showing fewer than `minOccurrences` copies leaves the default thumbnail blurred but unreplaced, and a genuinely repeated article image would be treated as a default.
+
 ### Available Replacement Functions
 
 | Function | Description |

@@ -21,6 +21,9 @@
   let articles = null;
   let articleIndex = 0;
   let elementArticleMap = new Map();
+  let staticImageDataUrl = null;
+  let repeatedImageCache = { key: null, srcs: null };
+  const originalImageSrc = new WeakMap();
 
   // === UTILITY FUNCTIONS ===
   
@@ -530,6 +533,54 @@
     return processedWords.join(' ');
   }
 
+  // Greyscale noise, generated once and shared. A publisher's fallback
+  // thumbnail stays recognizable through a blur because its silhouette and
+  // colour survive, so it has to be replaced outright rather than obscured.
+  function getStaticImageDataUrl() {
+    if (staticImageDataUrl) return staticImageDataUrl;
+
+    const size = 96;
+    const canvas = document.createElement('canvas');
+    canvas.width = size;
+    canvas.height = size;
+
+    const context = canvas.getContext('2d');
+    const noise = context.createImageData(size, size);
+    for (let i = 0; i < noise.data.length; i += 4) {
+      const level = Math.floor(Math.random() * 256);
+      noise.data[i] = level;
+      noise.data[i + 1] = level;
+      noise.data[i + 2] = level;
+      noise.data[i + 3] = 255;
+    }
+    context.putImageData(noise, 0, 0);
+
+    staticImageDataUrl = canvas.toDataURL('image/png');
+    return staticImageDataUrl;
+  }
+
+  // A default thumbnail is whichever image repeats across rows: real article
+  // images are distinct, the publisher's fallback is not. Counting is keyed on
+  // the original src so already-replaced images still count toward their group.
+  function getRepeatedImageSrcs(selector, minOccurrences) {
+    const cacheKey = `${processingCounter}:${selector}:${minOccurrences}`;
+    if (repeatedImageCache.key === cacheKey) return repeatedImageCache.srcs;
+
+    const counts = new Map();
+    document.querySelectorAll(selector).forEach(image => {
+      const src = originalImageSrc.get(image) ?? image.getAttribute('src');
+      if (!src) return;
+      counts.set(src, (counts.get(src) || 0) + 1);
+    });
+
+    const srcs = new Set(
+      Array.from(counts).filter(([, count]) => count >= minOccurrences).map(([src]) => src)
+    );
+
+    repeatedImageCache = { key: cacheKey, srcs };
+    return srcs;
+  }
+
   function blurElement(element, blurAmount = '8px') {
     element.style.filter = `blur(${blurAmount})`;
     // Images scale up so the blur does not reveal the backdrop at their edges.
@@ -540,6 +591,11 @@
   }
 
   // === ELEMENT PROCESSING ===
+
+  // Types that are never marked done and so are re-checked every cycle. Their
+  // trigger can become true later (a thumbnail only looks repeated once enough
+  // rows have loaded) and the app can re-render over an applied result.
+  const CONTINUOUS_TYPES = new Set(['defaultImage']);
 
   async function processElement(element, transformation) {
     const { type, options = {}, name } = transformation;
@@ -580,6 +636,10 @@
           processBlur(element, options);
           break;
 
+        case 'defaultImage':
+          processDefaultImage(element, options, transformation.selectors);
+          break;
+
         case 'sensitiveText':
           processSensitiveText(element, options);
           break;
@@ -589,7 +649,9 @@
           return;
       }
 
-      markAsProcessed(element, name);
+      if (!CONTINUOUS_TYPES.has(type)) {
+        markAsProcessed(element, name);
+      }
       log(`✅ Completed "${name}" (${type}) on ${elementSig}`);
 
     } catch (err) {
@@ -700,6 +762,32 @@
   function processBlur(element, options) {
     const { blurAmount = '8px' } = options;
     blurElement(element, blurAmount);
+  }
+
+  function processDefaultImage(element, options, selectors) {
+    if (element.tagName !== 'IMG') return;
+
+    const { minOccurrences = 3, replacement = 'static' } = options;
+    const replacementSrc = replacement === 'static'
+      ? getStaticImageDataUrl()
+      : chrome.runtime.getURL(replacement);
+
+    if (element.getAttribute('src') === replacementSrc) return;
+
+    if (!originalImageSrc.has(element)) {
+      originalImageSrc.set(element, element.getAttribute('src'));
+    }
+
+    const repeated = getRepeatedImageSrcs(selectors.join(', '), minOccurrences);
+    if (!repeated.has(originalImageSrc.get(element))) return;
+
+    // srcset would override src, and the blur is redundant once the image is
+    // replaced with noise that carries no identity to hide.
+    element.removeAttribute('srcset');
+    element.src = replacementSrc;
+    element.style.filter = '';
+    element.style.transform = '';
+    log(`Replaced default thumbnail: ${originalImageSrc.get(element)}`);
   }
 
   function processInjectCSS(options, transformationName) {
