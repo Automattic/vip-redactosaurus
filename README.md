@@ -26,7 +26,7 @@ The popup provides these controls:
 
 - **Anonymization** toggle (on/off)
 - **Keep screen awake** toggle (for live demos)
-- **Publisher name** and **Publisher domain** (defaults: "Demo Network" / "demosite.test")
+- **Show publisher name as** and **Show domain as** — the fake identity to display, not the customer values to look for (defaults: "Demo Network" / "demosite.test")
 - **Headline mode** (replace with generated headlines, or scramble existing ones)
 - **Author mode** (scramble existing names, or replace with generated ones)
 

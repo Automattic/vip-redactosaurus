@@ -84,6 +84,19 @@
 
     .toggle.active::after { transform: translateX(18px); }
 
+    .section-title {
+      font-size: 12px;
+      font-weight: 600;
+      color: #ddd;
+    }
+
+    .hint {
+      font-size: 11px;
+      color: #777;
+      line-height: 1.45;
+      margin-top: 4px;
+    }
+
     .field { margin-top: 10px; }
 
     .field label {
@@ -152,17 +165,23 @@
   </div>
 
   <div class="section">
+    <div class="section-title">Show this instead</div>
+    <p class="hint">
+      The real customer name and domain are detected from the page automatically.
+      Enter the made-up identity you want shown in their place. Leave blank for the defaults.
+    </p>
     <div class="field">
-      <label>Publisher name</label>
+      <label>Show publisher name as</label>
       <input type="text" id="publisherName" placeholder="Demo Network">
     </div>
     <div class="field">
-      <label>Publisher domain</label>
+      <label>Show domain as</label>
       <input type="text" id="publisherDomain" placeholder="demosite.test">
     </div>
   </div>
 
   <div class="section">
+    <div class="section-title">Article content</div>
     <div class="field">
       <label>Headline mode</label>
       <select data-setting="headlineMode">
