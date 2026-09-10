@@ -32,6 +32,8 @@ When adding new redaction targets, prefer layer 1 or 2. Only use layer 3 as a la
 
 **No CSS class selectors for content matching.** Parse.ly's class names change between deploys. Use `[href*='...']` patterns against their stable URL structure instead.
 
+**Never select on `data-v-*` attributes.** Parse.ly's Vue components carry scoped-style hashes like `data-v-95802abd`. These are build output and change whenever the component is recompiled, so they look stable in devtools and are not. The factoid selector uses `div.factoid div.figure > div` for this reason.
+
 **Paired headline/section data.** `content/articles.js` contains `{ headline, section }` objects. When a post row gets a fake headline, it gets the matching section from the same entry. Do not separate these into independent lists.
 
 **Single fake identity.** `FAKE_IDENTITY` holds the publisher name and domain (configurable from the popup, defaults to "Demo Network" / "demosite.test"). There is no per-customer mapping. The `.test` TLD is IANA-reserved.

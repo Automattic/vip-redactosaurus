@@ -127,6 +127,16 @@
       }
     },
     {
+      "name": "factoid_figures",
+      "type": "blur",
+      "selectors": [
+        "div.factoid div.figure > div"
+      ],
+      "options": {
+        "blurAmount": "5px"
+      }
+    },
+    {
       "name": "publisher_name",
       "type": "functionReplace",
       "selectors": [
