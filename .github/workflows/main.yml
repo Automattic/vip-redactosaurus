@@ -1,0 +1,16 @@
+# .github/workflows/release.yml
+name: Release extension
+on:
+  push:
+    tags: ['v*']
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: cd extension && zip -r ../extension.zip .
+      - run: gh release create "$GITHUB_REF_NAME" extension.zip --generate-notes
+        env:
+          GH_TOKEN: ${{ github.token }}
