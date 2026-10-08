@@ -20,6 +20,13 @@ Customer detection is automatic. The extension reads the domain from the Parse.l
 2. Open `chrome://extensions/`, enable Developer mode
 3. Click "Load unpacked" and select this folder
 
+   To just download the latest versioned release:
+
+1. [Download the extension](../../releases/latest/download/extension.zip) and unzip it.
+2. Open `chrome://extensions` in Chrome.
+3. Turn on **Developer mode** (top right).
+4. Click **Load unpacked** and select the unzipped folder.
+
 ## Extension Popup
 
 The popup provides these controls:
