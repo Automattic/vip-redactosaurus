@@ -16,16 +16,11 @@ Customer detection is automatic. The extension reads the domain from the Parse.l
 
 ## Installation
 
-1. Clone this repository
-2. Open `chrome://extensions/`, enable Developer mode
-3. Click "Load unpacked" and select this folder
-
-   To just download the latest versioned release:
-
-1. [Download the extension](../../releases/latest/download/extension.zip) and unzip it.
+1. [Download the extension](../../releases/latest/download/redactosaurus.zip) and unzip it.
 2. Open `chrome://extensions` in Chrome.
 3. Turn on **Developer mode** (top right).
-4. Click **Load unpacked** and select the unzipped folder.
+4. Click **Load unpacked** and select the unzipped `redactosaurus` folder.
+5. Turn on Redactosaurus using the extensions button to the right of the URL bar.
 
 ## Extension Popup
 
