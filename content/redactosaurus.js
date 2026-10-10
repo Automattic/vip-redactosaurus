@@ -7,6 +7,9 @@
   // === GLOBAL STATE ===
   let config = null;
   let isEnabled = true;
+  let hideHoverLinks = true;
+  let embedInIframe = false;
+  let embedInstalled = false;
   let isInitialized = false;
   let processedElementsMap = new Map();
   let elementContentHashes = new Map();
@@ -21,9 +24,21 @@
   let articles = null;
   let articleIndex = 0;
   let elementArticleMap = new Map();
-  let staticImageDataUrl = null;
-  let repeatedImageCache = { key: null, srcs: null };
-  const originalImageSrc = new WeakMap();
+  let thumbnailPool = null;
+  let thumbnailPoolFailed = false;
+  const originalHref = new Map();
+  let hrefListenersBound = false;
+
+  // Hide customer thumbnails at document_start, before config fetch. Real
+  // images stay invisible; local chrome-extension srcs (the stock pool) show.
+  setThumbnailHideEnabled(true);
+
+  chrome.storage.local.get(['enabled', 'embedInIframe'], (result) => {
+    if (embedInstalled) return;
+    isEnabled = result.enabled !== false;
+    embedInIframe = result.embedInIframe === true;
+    tryEmbedDashboard();
+  });
 
   // === UTILITY FUNCTIONS ===
   
@@ -42,7 +57,7 @@
   let FAKE_IDENTITY = { name: 'Demo Network', domain: 'demosite.test' };
 
   // Settings the popup can override at runtime; stored values win over config.json defaults.
-  const MODE_SETTINGS = ['headlineMode', 'authorMode'];
+  const MODE_SETTINGS = ['headlineMode', 'authorMode', 'thumbnailMode'];
 
   function generateFakeIdentity() {
     return FAKE_IDENTITY;
@@ -533,52 +548,56 @@
     return processedWords.join(' ');
   }
 
-  // Greyscale noise, generated once and shared. A publisher's fallback
-  // thumbnail stays recognizable through a blur because its silhouette and
-  // colour survive, so it has to be replaced outright rather than obscured.
-  function getStaticImageDataUrl() {
-    if (staticImageDataUrl) return staticImageDataUrl;
+  // Local JPEGs listed in assets/thumbnails/index.json. Fetched once; missing
+  // or empty index logs and leaves thumbs hidden rather than showing customer images.
+  async function getThumbnailPool(indexPath) {
+    if (thumbnailPoolFailed) return null;
+    if (thumbnailPool) return thumbnailPool;
 
-    const size = 96;
-    const canvas = document.createElement('canvas');
-    canvas.width = size;
-    canvas.height = size;
+    try {
+      const response = await fetch(chrome.runtime.getURL(indexPath));
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+      const files = await response.json();
+      if (!Array.isArray(files) || files.length === 0) {
+        throw new Error('index.json must be a non-empty array of filenames');
+      }
 
-    const context = canvas.getContext('2d');
-    const noise = context.createImageData(size, size);
-    for (let i = 0; i < noise.data.length; i += 4) {
-      const level = Math.floor(Math.random() * 256);
-      noise.data[i] = level;
-      noise.data[i + 1] = level;
-      noise.data[i + 2] = level;
-      noise.data[i + 3] = 255;
+      const base = indexPath.replace(/[^/]+$/, '');
+      thumbnailPool = files.map(file => chrome.runtime.getURL(base + file));
+      log(`Loaded ${thumbnailPool.length} pooled thumbnails from ${indexPath}`);
+      return thumbnailPool;
+    } catch (err) {
+      thumbnailPoolFailed = true;
+      error(`Failed to load thumbnail pool from "${indexPath}":`, err);
+      return null;
     }
-    context.putImageData(noise, 0, 0);
-
-    staticImageDataUrl = canvas.toDataURL('image/png');
-    return staticImageDataUrl;
   }
 
-  // A default thumbnail is whichever image repeats across rows: real article
-  // images are distinct, the publisher's fallback is not. Counting is keyed on
-  // the original src so already-replaced images still count toward their group.
-  function getRepeatedImageSrcs(selector, minOccurrences) {
-    const cacheKey = `${processingCounter}:${selector}:${minOccurrences}`;
-    if (repeatedImageCache.key === cacheKey) return repeatedImageCache.srcs;
+  function previousPooledSrc(element, pool) {
+    const thumbs = document.querySelectorAll('img');
+    let previous = null;
+    for (const img of thumbs) {
+      if (img === element) return previous;
+      const src = img.getAttribute('src') || '';
+      if (pool.includes(src)) previous = src;
+      else if (pool.includes(img.src)) previous = img.src;
+    }
+    return previous;
+  }
 
-    const counts = new Map();
-    document.querySelectorAll(selector).forEach(image => {
-      const src = originalImageSrc.get(image) ?? image.getAttribute('src');
-      if (!src) return;
-      counts.set(src, (counts.get(src) || 0) + 1);
-    });
-
-    const srcs = new Set(
-      Array.from(counts).filter(([, count]) => count >= minOccurrences).map(([src]) => src)
-    );
-
-    repeatedImageCache = { key: cacheKey, srcs };
-    return srcs;
+  function pickFromPool(src, pool, element) {
+    let hash = 0;
+    for (let i = 0; i < src.length; i++) {
+      hash = ((hash << 5) - hash + src.charCodeAt(i)) | 0;
+    }
+    let index = (hash >>> 0) % pool.length;
+    const previous = previousPooledSrc(element, pool);
+    if (previous && pool[index] === previous && pool.length > 1) {
+      index = (index + 1) % pool.length;
+    }
+    return pool[index];
   }
 
   function blurElement(element, blurAmount = '8px') {
@@ -587,14 +606,15 @@
     // Text nodes must not scale or they shift the surrounding layout.
     if (element.tagName === 'IMG') {
       element.style.transform = 'scale(1.02)';
+      element.classList.add('redactosaurus-ready');
     }
   }
 
   // === ELEMENT PROCESSING ===
 
-  // Types that are never marked done and so are re-checked every cycle. Their
-  // trigger can become true later (a thumbnail only looks repeated once enough
-  // rows have loaded) and the app can re-render over an applied result.
+  // Types that are never marked done and so are re-checked every cycle. Use
+  // this only when the app can restore original content after we rewrite it —
+  // Vue resets thumbnail srcs, and img textContent hashes do not detect that.
   const CONTINUOUS_TYPES = new Set(['defaultImage']);
 
   async function processElement(element, transformation) {
@@ -637,7 +657,7 @@
           break;
 
         case 'defaultImage':
-          processDefaultImage(element, options, transformation.selectors);
+          await processDefaultImage(element, options);
           break;
 
         case 'sensitiveText':
@@ -764,30 +784,26 @@
     blurElement(element, blurAmount);
   }
 
-  function processDefaultImage(element, options, selectors) {
+  async function processDefaultImage(element, options) {
     if (element.tagName !== 'IMG') return;
 
-    const { minOccurrences = 3, replacement = 'static' } = options;
-    const replacementSrc = replacement === 'static'
-      ? getStaticImageDataUrl()
-      : chrome.runtime.getURL(replacement);
-
-    if (element.getAttribute('src') === replacementSrc) return;
-
-    if (!originalImageSrc.has(element)) {
-      originalImageSrc.set(element, element.getAttribute('src'));
+    const { poolIndex } = options;
+    if (!poolIndex) {
+      error('processDefaultImage: No poolIndex specified');
+      return;
     }
 
-    const repeated = getRepeatedImageSrcs(selectors.join(', '), minOccurrences);
-    if (!repeated.has(originalImageSrc.get(element))) return;
+    const pool = await getThumbnailPool(poolIndex);
+    if (!pool) return;
 
-    // srcset would override src, and the blur is redundant once the image is
-    // replaced with noise that carries no identity to hide.
+    const currentSrc = element.getAttribute('src') || '';
+    if (!currentSrc) return;
+    if (pool.includes(currentSrc) || pool.includes(element.src)) return;
+
+    // srcset would keep the customer image on screen after we rewrite src.
     element.removeAttribute('srcset');
-    element.src = replacementSrc;
-    element.style.filter = '';
-    element.style.transform = '';
-    log(`Replaced default thumbnail: ${originalImageSrc.get(element)}`);
+    element.src = pickFromPool(currentSrc, pool, element);
+    log(`Replaced thumbnail with pooled image`);
   }
 
   function processInjectCSS(options, transformationName) {
@@ -899,6 +915,18 @@
     return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   }
 
+  // Parse.ly inserts Unicode format characters (ZWSP) around dots in displayed
+  // URLs so they can wrap. A literal "gazette.com" misses "gazette​.​com", and
+  // the brand token then replaces "gazette" with the publisher name.
+  function flexibleDomain(domain) {
+    return domain.split('.').map(escapeRegex).join('\\p{Cf}*\\.\\p{Cf}*');
+  }
+
+  function domainSweepPatterns(domain) {
+    const host = domain.replace(/^www\./i, '');
+    return [flexibleDomain(`www.${host}`), flexibleDomain(host)];
+  }
+
   // The customer's brand name is not in the URL, but it is almost always the
   // domain's second-level label ("gazette.com" -> "gazette"), which is what
   // appears in header labels like "The Gazette Sites". Tokens shorter than
@@ -916,9 +944,9 @@
   function buildSweepReplacements(realId, fakeDomain, fakeName) {
     // Domains are swept before names so a brand token cannot match inside a
     // domain that was already swapped.
-    const domainPatterns = [escapeRegex(realId)];
+    const domainPatterns = domainSweepPatterns(realId);
     if (previousFakeDomain && previousFakeDomain !== fakeDomain) {
-      domainPatterns.push(escapeRegex(previousFakeDomain));
+      domainPatterns.push(...domainSweepPatterns(previousFakeDomain));
     }
 
     const candidates = [
@@ -937,7 +965,7 @@
       candidates.push({ label: 'customer name', patterns: namePatterns, value: fakeName });
     }
 
-    const allPatterns = new RegExp(candidates.flatMap(c => c.patterns).join('|'), 'i');
+    const allPatterns = new RegExp(candidates.flatMap(c => c.patterns).join('|'), 'iu');
 
     return candidates.filter(candidate => {
       if (!allPatterns.test(candidate.value)) return true;
@@ -966,12 +994,12 @@
     if (candidates.length === 0) return;
 
     const replacements = candidates.map(({ patterns, value }) => ({
-      regex: new RegExp(patterns.join('|'), 'gi'),
+      regex: new RegExp(patterns.join('|'), 'giu'),
       value
     }));
 
     // Non-global so it has no lastIndex state; lets the walk skip untouched nodes.
-    const anyPattern = new RegExp(candidates.flatMap(c => c.patterns).join('|'), 'i');
+    const anyPattern = new RegExp(candidates.flatMap(c => c.patterns).join('|'), 'iu');
 
     const walker = document.createTreeWalker(
       document.body,
@@ -1002,7 +1030,149 @@
     previousFakeName = detectedCustomer.name;
   }
 
+  // Chrome's link-preview status bar reads href on hover and cannot be turned
+  // off. A swapped fake domain still leaks path slugs (author names). Every
+  // link is shown as the dash origin; the real destination is kept off-DOM.
+  // Inline onclick is blocked by the page CSP. Vue can restore href, so this
+  // re-runs every cycle.
+  const STATUS_BAR_HREF = 'http://dash.parsely.com';
+
+  function sweepAnchorHref(anchor) {
+    if (!anchor || !isEnabled || !hideHoverLinks) return;
+    const href = anchor.getAttribute('href');
+    if (!href || href.startsWith('javascript:') || href.charAt(0) === '#') return;
+    if (href === STATUS_BAR_HREF) return;
+    originalHref.set(anchor, anchor.href);
+    anchor.setAttribute('href', STATUS_BAR_HREF);
+  }
+
+  function sweepHrefs() {
+    if (!isEnabled || !hideHoverLinks || !document.body) return;
+    document.querySelectorAll('a[href]').forEach(sweepAnchorHref);
+  }
+
+  function restoreHrefs() {
+    for (const [anchor, real] of originalHref) {
+      if (anchor.isConnected) anchor.setAttribute('href', real);
+    }
+    originalHref.clear();
+  }
+
+  function destinationFromEvent(event) {
+    const el = event.target?.nodeType === Node.ELEMENT_NODE
+      ? event.target
+      : event.target?.parentElement;
+    const anchor = el?.closest('a');
+    if (!anchor) return null;
+    const real = originalHref.get(anchor) || anchor.href;
+    if (!real || real.startsWith('javascript:') || real === '#' || real === STATUS_BAR_HREF) return null;
+    return { anchor, real };
+  }
+
+  function isInternalDashUrl(href) {
+    try {
+      const host = new URL(href, location.href).hostname;
+      return host === 'dash.parsely.com' || host === 'app.parsely.com' || host.endsWith('.parsely.com');
+    } catch (err) {
+      return false;
+    }
+  }
+
+  function leaveDashboard(url, newTab) {
+    if (newTab) {
+      window.open(url, '_blank', 'noopener');
+      return;
+    }
+    window.top.location.assign(url);
+  }
+
+  function showLeaveInterstitial(url, newTab) {
+    if (document.getElementById('redactosaurus-leave')) return;
+
+    const overlay = document.createElement('div');
+    overlay.id = 'redactosaurus-leave';
+    overlay.setAttribute('data-redactosaurus', 'true');
+    overlay.innerHTML =
+      '<div class="redactosaurus-leave-card">' +
+      '<p>This opens the real customer site.</p>' +
+      '<div class="redactosaurus-leave-actions">' +
+      '<button type="button" data-leave="cancel">Stay on dashboard</button>' +
+      '<button type="button" data-leave="open">Open customer site</button>' +
+      '</div></div>';
+
+    const close = () => overlay.remove();
+    overlay.addEventListener('click', (event) => {
+      const action = event.target.closest('[data-leave]')?.getAttribute('data-leave');
+      if (!action) return;
+      close();
+      if (action === 'open') leaveDashboard(url, newTab);
+    });
+    document.addEventListener('keydown', function onKey(event) {
+      if (event.key !== 'Escape') return;
+      document.removeEventListener('keydown', onKey);
+      close();
+    });
+    (document.body || document.documentElement).appendChild(overlay);
+  }
+
+  function navigateOriginalHref(event) {
+    if (!isEnabled) return;
+    const found = destinationFromEvent(event);
+    if (!found) return;
+
+    if (event.type === 'click' && event.button !== 0) return;
+    if (event.type === 'auxclick' && event.button !== 1) return;
+
+    const newTab = event.type === 'auxclick' || event.metaKey || event.ctrlKey || event.shiftKey;
+    const internal = isInternalDashUrl(found.real);
+
+    if (internal && !hideHoverLinks) return;
+    if (internal && !originalHref.has(found.anchor)) return;
+
+    event.preventDefault();
+    event.stopImmediatePropagation();
+
+    if (internal) {
+      if (newTab) window.open(found.real, '_blank', 'noopener');
+      else window.location.assign(found.real);
+      return;
+    }
+
+    showLeaveInterstitial(found.real, newTab);
+  }
+
+  function bindHrefSweepListeners() {
+    if (hrefListenersBound) return;
+    hrefListenersBound = true;
+    document.addEventListener('click', navigateOriginalHref, true);
+    document.addEventListener('auxclick', navigateOriginalHref, true);
+    document.addEventListener('mouseover', (event) => {
+      const el = event.target?.nodeType === Node.ELEMENT_NODE
+        ? event.target
+        : event.target?.parentElement;
+      const anchor = el?.closest('a');
+      if (anchor) sweepAnchorHref(anchor);
+    }, true);
+  }
+
   // === CONTENT HIDING & REVEALING ===
+
+  function setThumbnailHideEnabled(enabled) {
+    const existing = document.getElementById('redactosaurus-thumb-hide');
+    if (!enabled) {
+      if (existing) existing.remove();
+      return;
+    }
+    if (existing) return;
+
+    const style = document.createElement('style');
+    style.id = 'redactosaurus-thumb-hide';
+    style.textContent = [
+      'div.thumb img { opacity: 0 !important; }',
+      'div.thumb img[src^="chrome-extension://"], div.thumb img.redactosaurus-ready { opacity: 1 !important; }'
+    ].join('\n');
+    (document.head || document.documentElement).appendChild(style);
+  }
 
   function hideContentImmediately() {
     if (!config || !config.transformations || !isEnabled) return;
@@ -1015,11 +1185,9 @@
       if (!transformation.selectors) return;
       
       transformation.selectors.forEach(selector => {
-        if (transformation.type === 'blur') {
-          // Hide images with opacity
-          hidingCSS.push(`${selector} { opacity: 0 !important; transition: opacity 0.3s ease; }`);
+        if (transformation.type === 'blur' || transformation.type === 'defaultImage') {
+          hidingCSS.push(`${selector} { opacity: 0 !important; }`);
         } else {
-          // Hide text content with visibility
           hidingCSS.push(`${selector} { visibility: hidden !important; }`);
         }
       });
@@ -1126,6 +1294,7 @@
     log(`=== PROCESSING CYCLE #${processingCounter} START ===`);
 
     checkForUrlChange();
+    sweepHrefs();
     sweepTextNodes();
 
     let totalElementsFound = 0;
@@ -1202,10 +1371,14 @@
     for (const [element] of elementContentHashes) {
       if (!document.contains(element)) orphans.add(element);
     }
+    for (const [element] of originalHref) {
+      if (!document.contains(element)) orphans.add(element);
+    }
 
     orphans.forEach(element => {
       processedElementsMap.delete(element);
       elementContentHashes.delete(element);
+      originalHref.delete(element);
     });
 
     if (orphans.size > 0) {
@@ -1305,8 +1478,10 @@
 
   async function loadExtensionState() {
     try {
-      const result = await chrome.storage.local.get(['enabled', 'publisherName', 'publisherDomain', ...MODE_SETTINGS]);
+      const result = await chrome.storage.local.get(['enabled', 'hideHoverLinks', 'embedInIframe', 'publisherName', 'publisherDomain', ...MODE_SETTINGS]);
       isEnabled = result.enabled !== false;
+      hideHoverLinks = result.hideHoverLinks !== false;
+      embedInIframe = result.embedInIframe === true;
       if (result.publisherName) FAKE_IDENTITY.name = result.publisherName;
       if (result.publisherDomain) FAKE_IDENTITY.domain = result.publisherDomain;
       MODE_SETTINGS.forEach(key => {
@@ -1317,6 +1492,131 @@
       error('Failed to load extension state:', err);
       isEnabled = true;
     }
+  }
+
+  const EMBED_PARAM = 'redactosaurus-embed';
+  const EMBED_SRC_KEY = 'redactosaurus-embed-src';
+  const EMBED_WRAP_AT_KEY = 'redactosaurus-wrap-at';
+  const EMBED_BLOCKED_KEY = 'redactosaurus-wrap-blocked';
+
+  function isParselyDashHost() {
+    return location.hostname === 'dash.parsely.com' || location.hostname === 'app.parsely.com';
+  }
+
+  function hasEmbedFlag(href = location.href) {
+    return new URL(href).searchParams.has(EMBED_PARAM);
+  }
+
+  function withEmbedFlag(href) {
+    const url = new URL(href);
+    url.searchParams.set(EMBED_PARAM, '1');
+    return url.href;
+  }
+
+  function withoutEmbedFlag(href) {
+    const url = new URL(href);
+    url.searchParams.delete(EMBED_PARAM);
+    return url.href;
+  }
+
+  function customerPathSegment() {
+    const match = location.pathname.match(/^\/([^/]+)/);
+    return match && match[1].includes('.') ? match[1] : null;
+  }
+
+  function escapeAttr(value) {
+    return String(value)
+      .replace(/&/g, '&amp;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;')
+      .replace(/</g, '&lt;');
+  }
+
+  function notifyEmbedParent() {
+    if (window === window.top || !hasEmbedFlag()) return;
+    window.parent.postMessage({
+      source: 'redactosaurus-embed',
+      action: 'url',
+      href: withoutEmbedFlag(location.href)
+    }, location.origin);
+  }
+
+  function signalEmbedReady() {
+    if (window === window.top || !hasEmbedFlag()) return;
+    window.parent.postMessage({ source: 'redactosaurus-embed', action: 'ready' }, location.origin);
+  }
+
+  function restoreEmbeddedDashboard() {
+    const stored = sessionStorage.getItem(EMBED_SRC_KEY);
+    sessionStorage.removeItem(EMBED_BLOCKED_KEY);
+    if (window === window.top && document.getElementById('redactosaurus-frame') && stored) {
+      location.replace(stored);
+    }
+  }
+
+  function installEmbedShell(realSrc) {
+    if (embedInstalled) return true;
+    embedInstalled = true;
+    sessionStorage.setItem(EMBED_SRC_KEY, realSrc);
+    sessionStorage.setItem(EMBED_WRAP_AT_KEY, String(Date.now()));
+
+    const framed = withEmbedFlag(realSrc);
+    document.open();
+    document.write(
+      '<!DOCTYPE html><html><head><meta charset="utf-8"><title>Parse.ly</title>' +
+      '<style>html,body,#redactosaurus-frame{margin:0;height:100%;width:100%;border:0;display:block;background:#fff}</style>' +
+      '</head><body>' +
+      `<iframe id="redactosaurus-frame" src="${escapeAttr(framed)}" allow="fullscreen"></iframe>` +
+      '</body></html>'
+    );
+    document.close();
+    history.replaceState(null, '', '/');
+
+    const frame = document.getElementById('redactosaurus-frame');
+    const timeout = setTimeout(() => {
+      error('Address-bar iframe did not load. Parse.ly may block framing. Restoring the real URL.');
+      location.replace(realSrc);
+    }, 5000);
+
+    window.addEventListener('message', (event) => {
+      if (event.origin !== location.origin) return;
+      if (event.data?.source !== 'redactosaurus-embed') return;
+      if (event.data.action === 'ready') {
+        clearTimeout(timeout);
+        log('Address-bar iframe is live');
+      }
+      if (event.data.action === 'url' && event.data.href) {
+        sessionStorage.setItem(EMBED_SRC_KEY, event.data.href);
+      }
+    });
+
+    return true;
+  }
+
+  function tryEmbedDashboard() {
+    if (!embedInIframe || !isEnabled) return false;
+    if (window !== window.top) return false;
+    if (!isParselyDashHost()) return false;
+    if (hasEmbedFlag()) return false;
+    if (sessionStorage.getItem(EMBED_BLOCKED_KEY) === '1') return false;
+
+    const lastWrap = Number(sessionStorage.getItem(EMBED_WRAP_AT_KEY) || 0);
+    if (customerPathSegment() && lastWrap && Date.now() - lastWrap < 2000) {
+      sessionStorage.setItem(EMBED_BLOCKED_KEY, '1');
+      error('Address-bar iframe was dismissed (frame-bust). Not wrapping again this session.');
+      return false;
+    }
+
+    if (customerPathSegment()) {
+      return installEmbedShell(withoutEmbedFlag(location.href));
+    }
+
+    const stored = sessionStorage.getItem(EMBED_SRC_KEY);
+    if (stored && location.pathname === '/') {
+      return installEmbedShell(stored);
+    }
+
+    return false;
   }
 
   function checkForUrlChange() {
@@ -1330,6 +1630,7 @@
       detectedCustomer = newCustomer;
       resetProcessedElements();
     }
+    notifyEmbedParent();
   }
 
   // === INITIALIZATION ===
@@ -1347,12 +1648,18 @@
     }
 
     await loadExtensionState();
+    if (tryEmbedDashboard()) {
+      isInitialized = true;
+      return;
+    }
+    setThumbnailHideEnabled(isEnabled);
 
     detectedCustomer = detectCustomerFromUrl();
     lastDetectedUrl = window.location.href;
     log(detectedCustomer ? 'Customer detected:' : 'No customer detected', detectedCustomer);
 
     if (isEnabled) {
+      bindHrefSweepListeners();
       hideContentImmediately();
       injectGlobalCSS();
 
@@ -1364,6 +1671,7 @@
     }
 
     isInitialized = true;
+    signalEmbedReady();
     log('Initialization complete');
   }
 
@@ -1416,6 +1724,8 @@
         isEnabled = request.enabled;
         
         if (isEnabled) {
+          bindHrefSweepListeners();
+          setThumbnailHideEnabled(true);
           hideContentImmediately();
           await processAllElements();
           setupMutationObserver();
@@ -1423,9 +1733,12 @@
           setTimeout(revealAnonymizedContent, 300);
         } else {
           stopContinuousProcessing();
+          restoreHrefs();
+          setThumbnailHideEnabled(false);
           revealAnonymizedContent();
           hideDemoModeIndicator();
           resetProcessedElements();
+          restoreEmbeddedDashboard();
         }
         
         sendResponse({ success: true, enabled: isEnabled });
@@ -1437,6 +1750,26 @@
           initialized: isInitialized,
           hasConfig: !!config 
         });
+        break;
+
+      case 'updateHideHoverLinks':
+        hideHoverLinks = request.enabled !== false;
+        if (hideHoverLinks) {
+          sweepHrefs();
+        } else {
+          restoreHrefs();
+        }
+        sendResponse({ success: true, hideHoverLinks });
+        break;
+
+      case 'updateEmbedInIframe':
+        embedInIframe = request.enabled === true;
+        if (embedInIframe) {
+          tryEmbedDashboard();
+        } else {
+          restoreEmbeddedDashboard();
+        }
+        sendResponse({ success: true, embedInIframe });
         break;
 
       case 'updateMode':

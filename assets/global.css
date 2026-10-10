@@ -53,3 +53,53 @@
 .tooltip-demo:hover::after {
   opacity: 1;
 }
+
+#redactosaurus-leave {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483647;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.55);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+.redactosaurus-leave-card {
+  width: min(420px, calc(100vw - 32px));
+  background: #1a1a2e;
+  color: #e0e0e0;
+  border-radius: 8px;
+  padding: 20px 22px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+}
+
+.redactosaurus-leave-card p {
+  margin: 0 0 16px;
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.redactosaurus-leave-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.redactosaurus-leave-actions button {
+  border: 0;
+  border-radius: 6px;
+  padding: 8px 12px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.redactosaurus-leave-actions [data-leave="cancel"] {
+  background: #333;
+  color: #eee;
+}
+
+.redactosaurus-leave-actions [data-leave="open"] {
+  background: #c62828;
+  color: #fff;
+}

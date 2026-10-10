@@ -5,7 +5,8 @@
     "debug": false,
     "showDemoIndicator": false,
     "headlineMode": "replace",
-    "authorMode": "scramble"
+    "authorMode": "replace",
+    "thumbnailMode": "replace"
   },
   "urlPatterns": {
     "parsely": {
@@ -59,8 +60,7 @@
       "enabledSetting": "authorMode",
       "enabledValue": "scramble",
       "selectors": [
-        "div.author a[href*='/authors/']",
-        "a[href*='/authors/']"
+        "a[href*='/authors/']:not([href*='/authors/?']):not([href$='/authors/'])"
       ],
       "options": {
         "preserveCase": true,
@@ -78,8 +78,7 @@
       "enabledSetting": "authorMode",
       "enabledValue": "replace",
       "selectors": [
-        "div.author a[href*='/authors/']",
-        "a[href*='/authors/']"
+        "a[href*='/authors/']:not([href*='/authors/?']):not([href$='/authors/'])"
       ],
       "options": {
         "functionName": "generateRandomAuthorName",
@@ -97,8 +96,7 @@
       "name": "section_names",
       "type": "functionReplace",
       "selectors": [
-        "div.section a[href*='/sections/']",
-        "a[href*='/sections/']"
+        "a[href*='/sections/']:not([href*='/sections/?']):not([href$='/sections/'])"
       ],
       "options": {
         "functionName": "generateRandomSectionName",
@@ -106,34 +104,29 @@
       }
     },
     {
-      "name": "article_images",
+      "name": "article_thumbnails_replace",
+      "type": "defaultImage",
+      "enabled": true,
+      "enabledSetting": "thumbnailMode",
+      "enabledValue": "replace",
+      "selectors": [
+        "div.thumb img"
+      ],
+      "options": {
+        "poolIndex": "assets/thumbnails/index.json"
+      }
+    },
+    {
+      "name": "article_thumbnails_blur",
       "type": "blur",
+      "enabled": true,
+      "enabledSetting": "thumbnailMode",
+      "enabledValue": "blur",
       "selectors": [
         "div.thumb img"
       ],
       "options": {
         "blurAmount": "3px"
-      }
-    },
-    {
-      "name": "default_thumbnails",
-      "type": "defaultImage",
-      "selectors": [
-        "div.thumb img"
-      ],
-      "options": {
-        "minOccurrences": 3,
-        "replacement": "static"
-      }
-    },
-    {
-      "name": "factoid_figures",
-      "type": "blur",
-      "selectors": [
-        "div.factoid div.figure > div"
-      ],
-      "options": {
-        "blurAmount": "5px"
       }
     },
     {

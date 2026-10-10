@@ -3,7 +3,7 @@
 
 console.log('[VIP Redactosaurus] Background service worker started');
 
-const MODE_DEFAULTS = { headlineMode: 'replace', authorMode: 'scramble' };
+const MODE_DEFAULTS = { headlineMode: 'replace', authorMode: 'replace', thumbnailMode: 'replace' };
 const MODE_SETTINGS = Object.keys(MODE_DEFAULTS);
 
 // Handle extension installation
@@ -14,6 +14,7 @@ chrome.runtime.onInstalled.addListener((details) => {
     // Set default enabled state
     chrome.storage.local.set({
       enabled: true,
+      hideHoverLinks: true,
       wakeLockEnabled: true,
       ...MODE_DEFAULTS,
       publisherName: '',
@@ -45,6 +46,14 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     case 'updateState':
       handleUpdateState(request, sendResponse);
       return true; // Keep message channel open
+
+    case 'updateHideHoverLinks':
+      handleUpdateHideHoverLinks(request, sendResponse);
+      return true;
+
+    case 'updateEmbedInIframe':
+      handleUpdateEmbedInIframe(request, sendResponse);
+      return true;
 
     case 'updateWakeLock':
       handleUpdateWakeLock(request, sendResponse);
@@ -108,14 +117,17 @@ async function handleToggle(request, sendResponse) {
 // Handle status requests from popup
 async function handleGetStatus(sendResponse) {
   try {
-    const result = await chrome.storage.local.get(['enabled', 'wakeLockEnabled', ...MODE_SETTINGS, 'publisherName', 'publisherDomain', 'installDate']);
+    const result = await chrome.storage.local.get(['enabled', 'hideHoverLinks', 'embedInIframe', 'wakeLockEnabled', ...MODE_SETTINGS, 'publisherName', 'publisherDomain', 'installDate']);
 
     sendResponse({
       success: true,
       enabled: result.enabled !== false,
+      hideHoverLinks: result.hideHoverLinks !== false,
+      embedInIframe: result.embedInIframe === true,
       wakeLockEnabled: result.wakeLockEnabled || false,
       headlineMode: result.headlineMode || MODE_DEFAULTS.headlineMode,
       authorMode: result.authorMode || MODE_DEFAULTS.authorMode,
+      thumbnailMode: result.thumbnailMode || MODE_DEFAULTS.thumbnailMode,
       publisherName: result.publisherName || '',
       publisherDomain: result.publisherDomain || '',
       installDate: result.installDate,
@@ -156,7 +168,53 @@ async function handleUpdateState(request, sendResponse) {
   }
 }
 
+async function handleUpdateHideHoverLinks(request, sendResponse) {
+  try {
+    const hideHoverLinks = request.enabled;
+    await chrome.storage.local.set({ hideHoverLinks });
+
+    const tabs = await chrome.tabs.query({});
+    const notifications = tabs.map(tab => {
+      if (tab.url && (tab.url.startsWith('http://') || tab.url.startsWith('https://'))) {
+        return chrome.tabs.sendMessage(tab.id, {
+          action: 'updateHideHoverLinks',
+          enabled: hideHoverLinks
+        }).catch(() => {});
+      }
+      return Promise.resolve();
+    });
+    await Promise.allSettled(notifications);
+
+    sendResponse({ success: true, hideHoverLinks });
+  } catch (error) {
+    sendResponse({ success: false, error: error.message });
+  }
+}
+
 // Handle wake lock update requests
+async function handleUpdateEmbedInIframe(request, sendResponse) {
+  try {
+    const embedInIframe = request.enabled === true;
+    await chrome.storage.local.set({ embedInIframe });
+
+    const tabs = await chrome.tabs.query({});
+    const notifications = tabs.map(tab => {
+      if (tab.url && (tab.url.startsWith('http://') || tab.url.startsWith('https://'))) {
+        return chrome.tabs.sendMessage(tab.id, {
+          action: 'updateEmbedInIframe',
+          enabled: embedInIframe
+        }).catch(() => {});
+      }
+      return Promise.resolve();
+    });
+    await Promise.allSettled(notifications);
+
+    sendResponse({ success: true, embedInIframe });
+  } catch (error) {
+    sendResponse({ success: false, error: error.message });
+  }
+}
+
 async function handleUpdateWakeLock(request, sendResponse) {
   try {
     const wakeLockEnabled = request.enabled;

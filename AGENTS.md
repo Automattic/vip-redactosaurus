@@ -20,7 +20,7 @@ State flows: popup -> background (storage) -> content script reads on init and l
 
 ## Redaction Layers (order matters)
 
-1. **Global text sweep** (`sweepTextNodes`) - TreeWalker replaces the real customer domain with the fake domain, and the brand token derived from that domain (`getBrandToken`) with the fake publisher name, across all text nodes. This is the broadest, most resilient layer. Domain patterns are applied before name patterns so the brand token cannot match inside an already-swapped domain.
+1. **Global text sweep** (`sweepTextNodes`) - TreeWalker replaces the real customer domain with the fake domain, and the brand token derived from that domain (`getBrandToken`) with the fake publisher name, across all text nodes. This is the broadest, most resilient layer. Domain patterns are applied before name patterns so the brand token cannot match inside an already-swapped domain. Domain matches allow Unicode format characters between labels; Parse.ly inserts ZWSP around dots in displayed URLs, and a literal `gazette.com` would miss `gazette​.​com` and leave the label for the brand token to eat. `sweepHrefs` sets every `a[href]` to `http://dash.parsely.com` so Chrome's status-bar link preview cannot leak a customer host or a path slug (author names). The real destination is kept off-DOM and a capture-phase click listener navigates there. Inline `onclick` cannot do this — the page CSP blocks it. **Hide address bar** (off by default) wraps the top frame in a same-origin iframe and `replaceState`s the tab to `/` so the omnibox does not show the customer path. Do not mask `history` on the dashboard document itself. If the iframe does not signal ready, navigate back to the real URL. A wrap that is immediately dismissed is treated as frame-busting and is not retried that session.
 
 **The sweep must converge.** It re-runs every cycle over text it already rewrote, so any replacement whose own output still matches a redaction pattern will rewrite its own result forever and grow the text without bound. `buildSweepReplacements` drops such replacements and logs why. Never add a sweep replacement without checking its output against the active patterns.
 2. **Href-pattern selectors** - Transformations in `config.json` target elements by URL structure (e.g. `a[href*='/authors/']`), not CSS classes. CSS classes change with UI updates; URL structures do not.
@@ -32,7 +32,7 @@ When adding new redaction targets, prefer layer 1 or 2. Only use layer 3 as a la
 
 **No CSS class selectors for content matching.** Parse.ly's class names change between deploys. Use `[href*='...']` patterns against their stable URL structure instead.
 
-**Never select on `data-v-*` attributes.** Parse.ly's Vue components carry scoped-style hashes like `data-v-95802abd`. These are build output and change whenever the component is recompiled, so they look stable in devtools and are not. The factoid selector uses `div.factoid div.figure > div` for this reason.
+**Never select on `data-v-*` attributes.** Parse.ly's Vue components carry scoped-style hashes like `data-v-95802abd`. These are build output and change whenever the component is recompiled, so they look stable in devtools and are not. Prefer stable structure (for example `div.factoid div.figure > div`) over those hashes.
 
 **Paired headline/section data.** `content/articles.js` contains `{ headline, section }` objects. When a post row gets a fake headline, it gets the matching section from the same entry. Do not separate these into independent lists.
 
@@ -48,9 +48,9 @@ All transformation rules are data-driven. To add a new redaction target, add an 
 
 Transformation types: `functionReplace`, `scramble`, `blur`, `defaultImage`. Each has an `options` object specific to its type.
 
-Types listed in `CONTINUOUS_TYPES` are never marked processed and so re-run every cycle. Use this only when the trigger condition can become true after the first pass — `defaultImage` needs it because an image only looks repeated once enough rows have loaded. Everything else must be marked processed or it will fight the app on every tick.
+Types listed in `CONTINUOUS_TYPES` are never marked processed and so re-run every cycle. Use this only when the app can restore original content after we rewrite it — `defaultImage` needs it because Vue resets thumbnail `src`s and an img's textContent hash does not detect that. Everything else must be marked processed or it will fight the app on every tick.
 
-Conditional transformations use `enabledSetting` + `enabledValue` to toggle based on stored settings. `MODE_SETTINGS` in `redactosaurus.js` lists which settings the popup can override (`headlineMode`, `authorMode`); stored values are applied over the `config.json` defaults on load. Popup mode dropdowns are wired by a `data-setting` attribute and share the single `updateMode` message — do not add a per-setting message action.
+Conditional transformations use `enabledSetting` + `enabledValue` to toggle based on stored settings. `MODE_SETTINGS` in `redactosaurus.js` lists which settings the popup can override (`headlineMode`, `authorMode`, `thumbnailMode`); stored values are applied over the `config.json` defaults on load. Popup mode dropdowns are wired by a `data-setting` attribute and share the single `updateMode` message — do not add a per-setting message action.
 
 ## Adding Replacement Functions
 

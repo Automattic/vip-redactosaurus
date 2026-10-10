@@ -9,7 +9,7 @@ Redaction happens in three layers, from broad to specific:
 1. **Global text sweep** - A `TreeWalker` replaces every occurrence of the detected customer domain (e.g. `gazette.com`) with a fake domain (`demosite.test` by default) and every occurrence of the brand token derived from that domain (`gazette`) with the fake publisher name, across all text nodes. The brand token catches header labels the app builds from the account name, such as "The Gazette Sites - gazette.com".
 
    Two limits apply. The token only matches when the brand renders as one word (`gazette` matches "The Gazette", but `dailyplanet` will not match "Daily Planet"). And the publisher name and domain you configure must not contain the customer id or brand token — a replacement that matches its own output would rewrite it on every cycle, so the sweep drops it and logs an error instead.
-2. **Href-pattern selectors** - Content like authors (`a[href*='/authors/']`) and sections (`a[href*='/sections/']`) is matched by URL structure rather than CSS classes, making it resilient to UI changes.
+2. **Href-pattern selectors** - Content like authors and sections is matched by URL structure rather than CSS classes, making it resilient to UI changes. Index and nav links (`/authors/?…`, `/authors/`) are excluded so product labels stay intact.
 3. **Structural selectors** - A few specific selectors handle elements where href matching isn't possible (image thumbnails, publisher name, site picker).
 
 Customer detection is automatic. The extension reads the domain from the Parse.ly dashboard URL and generates a consistent fake identity for it.
@@ -25,12 +25,15 @@ Customer detection is automatic. The extension reads the domain from the Parse.l
 The popup provides these controls:
 
 - **Anonymization** toggle (on/off)
+- **Hide hover links** toggle (on by default) — Chrome’s status-bar URL preview is rewritten to `http://dash.parsely.com`. Turn off to see the real hrefs while debugging.
+- **Hide address bar** toggle (off by default, experimental) — loads the dashboard in a same-origin iframe so the tab URL stays `https://dash.parsely.com/`. Turn it off if the frame stays blank or the app jumps out.
 - **Keep screen awake** toggle (for live demos)
 - **Show publisher name as** and **Show domain as** — the fake identity to display, not the customer values to look for (defaults: "Demo Network" / "demosite.test")
 - **Headline mode** (replace with generated headlines, or scramble existing ones)
-- **Author mode** (scramble existing names, or replace with generated ones)
+- **Author mode** (replace with generated names, or scramble existing ones)
+- **Thumbnail mode** (replace with local stock photos, or blur existing thumbnails). Defaults to replace.
 
-All popup settings are persisted and applied live without reloading. Author mode defaults to scramble: generated names still read as plausible real people, which looks like leaked customer data in a demo even when it is not.
+All popup settings are persisted and applied live without reloading. Author mode defaults to replace.
 
 ## Configuration
 
@@ -57,7 +60,7 @@ Define regex patterns to extract the customer ID from dashboard URLs:
 {
   "name": "authors_replace",
   "type": "functionReplace",
-  "selectors": ["a[href*='/authors/']"],
+  "selectors": ["a[href*='/authors/']:not([href*='/authors/?']):not([href$='/authors/'])"],
   "options": {
     "functionName": "generateRandomAuthorName"
   }
@@ -92,23 +95,20 @@ Define regex patterns to extract the customer ID from dashboard URLs:
 }
 ```
 
-**`defaultImage`** - Replace a publisher's fallback thumbnail outright. A blur is not enough for these: the same image repeats down the page, and its silhouette and colour stay recognizable. The default is identified by repetition — real article images are distinct, a fallback is not — so nothing customer-specific is hardcoded. Any image whose src appears at least `minOccurrences` times is swapped and un-blurred.
+**`defaultImage`** - Replace every matching `img` with a local stock photo from `assets/thumbnails/`. Customer thumbnails stay at `opacity: 0` until the `src` is a `chrome-extension://` URL, so a branded image cannot paint. The pool file is chosen by hashing the original `src`, so the same article keeps the same stand-in across SPA re-renders.
 
 ```json
 {
-  "name": "default_thumbnails",
+  "name": "article_thumbnails",
   "type": "defaultImage",
   "selectors": ["div.thumb img"],
   "options": {
-    "minOccurrences": 3,
-    "replacement": "static"
+    "poolIndex": "assets/thumbnails/index.json"
   }
 }
 ```
 
-`replacement` is either `"static"` (generated greyscale noise, no asset required) or a path to a bundled image such as `"assets/logo.png"`, which must be listed in the manifest's `web_accessible_resources`. Place this transformation after any `blur` covering the same selector.
-
-Two limits: a page showing fewer than `minOccurrences` copies leaves the default thumbnail blurred but unreplaced, and a genuinely repeated article image would be treated as a default.
+`index.json` is a JSON array of filenames in that directory, for example `["01.jpg", "02.jpg"]`. Add files there and list them in the index; they must also be covered by `web_accessible_resources` (the `assets/*` glob already does this).
 
 ### Available Replacement Functions
 
@@ -121,7 +121,7 @@ Two limits: a page showing fewer than `minOccurrences` copies leaves the default
 
 ### Conditional Transformations
 
-Transformations can be toggled by a setting value. Headlines (`headlineMode`) and author names (`authorMode`) use this to switch between replace and scramble modes from the popup:
+Transformations can be toggled by a setting value. Headlines (`headlineMode`), author names (`authorMode`), and thumbnails (`thumbnailMode`) use this from the popup:
 
 ```json
 {
@@ -153,7 +153,7 @@ Transformations can be toggled by a setting value. Headlines (`headlineMode`) an
 ├── content/redactosaurus.js    Content script (runs at document_start)
 ├── content/config.json         Transformation rules
 ├── content/articles.js         Paired headline + section data
-└── assets/                     Icons, CSS, placeholder images
+└── assets/                     Icons, CSS, stock thumbnail pool
 ```
 
 ## Notes

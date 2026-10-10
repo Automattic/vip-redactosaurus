@@ -1,5 +1,7 @@
 document.addEventListener('DOMContentLoaded', function() {
   const toggleSwitch = document.getElementById('toggleSwitch');
+  const hideHoverLinksSwitch = document.getElementById('hideHoverLinksSwitch');
+  const embedInIframeSwitch = document.getElementById('embedInIframeSwitch');
   const wakeLockSwitch = document.getElementById('wakeLockSwitch');
   const modeSelects = document.querySelectorAll('select[data-setting]');
   const publisherNameInput = document.getElementById('publisherName');
@@ -7,12 +9,16 @@ document.addEventListener('DOMContentLoaded', function() {
   const status = document.getElementById('status');
 
   let isEnabled = false;
+  let hideHoverLinks = true;
+  let embedInIframe = false;
   let wakeLockEnabled = false;
   let wakeLock = null;
 
   init();
 
   toggleSwitch.addEventListener('click', handleToggle);
+  hideHoverLinksSwitch.addEventListener('click', handleHideHoverLinksToggle);
+  embedInIframeSwitch.addEventListener('click', handleEmbedInIframeToggle);
   wakeLockSwitch.addEventListener('click', handleWakeLockToggle);
   modeSelects.forEach(select => select.addEventListener('change', handleModeChange));
   publisherNameInput.addEventListener('change', handlePublisherChange);
@@ -33,6 +39,8 @@ document.addEventListener('DOMContentLoaded', function() {
     try {
       const response = await sendMessage({ action: 'getStatus' });
       isEnabled = response.enabled || false;
+      hideHoverLinks = response.hideHoverLinks !== false;
+      embedInIframe = response.embedInIframe === true;
       wakeLockEnabled = response.wakeLockEnabled || false;
       modeSelects.forEach(select => {
         const value = response[select.dataset.setting];
@@ -56,6 +64,32 @@ document.addEventListener('DOMContentLoaded', function() {
       await sendMessage({ action: 'toggle', enabled: newState });
     } catch (e) {
       isEnabled = !newState;
+      updateUI();
+    }
+  }
+
+  async function handleHideHoverLinksToggle() {
+    const newState = !hideHoverLinks;
+    hideHoverLinks = newState;
+    updateUI();
+
+    try {
+      await sendMessage({ action: 'updateHideHoverLinks', enabled: newState });
+    } catch (e) {
+      hideHoverLinks = !newState;
+      updateUI();
+    }
+  }
+
+  async function handleEmbedInIframeToggle() {
+    const newState = !embedInIframe;
+    embedInIframe = newState;
+    updateUI();
+
+    try {
+      await sendMessage({ action: 'updateEmbedInIframe', enabled: newState });
+    } catch (e) {
+      embedInIframe = !newState;
       updateUI();
     }
   }
@@ -107,6 +141,8 @@ document.addEventListener('DOMContentLoaded', function() {
 
   function updateUI() {
     toggleSwitch.classList.toggle('active', isEnabled);
+    hideHoverLinksSwitch.classList.toggle('active', hideHoverLinks);
+    embedInIframeSwitch.classList.toggle('active', embedInIframe);
     wakeLockSwitch.classList.toggle('active', wakeLockEnabled);
     status.textContent = isEnabled ? 'Active' : 'Inactive';
     status.className = `status-bar ${isEnabled ? 'active' : 'inactive'}`;
