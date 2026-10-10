@@ -10,7 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: zip -r extension.zip . -x ".git/*" ".github/*"
-      - run: gh release create "$GITHUB_REF_NAME" extension.zip --generate-notes
+      - run: zip -r redactosaurus.zip . -x ".git/*" ".github/*"
+      - run: gh release create "$GITHUB_REF_NAME" redactosaurus.zip --generate-notes
         env:
           GH_TOKEN: ${{ github.token }}
