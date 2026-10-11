@@ -1,18 +1,32 @@
 # VIP Redactosaurus
 
-A Chrome extension that anonymizes Parse.ly dashboards before they render, enabling safe product demos without exposing customer data. Runs at `document_start` to prevent any flash of real content.
+A Chrome extension that anonymizes Parse.ly dashboards before they render, so Sales can demo a live, data-rich product without showing who the customer is. Runs at `document_start` to prevent a flash of real content.
 
-## How It Works
+Customer detection is automatic. The extension reads the site id from the dashboard URL (for example `nypost.com` in `https://dash.parsely.com/nypost.com/`) and swaps that identity for a single fake publisher. There is no per-customer mapping and no customer-specific code.
 
-Redaction happens in three layers, from broad to specific:
+## What gets anonymized
 
-1. **Global text sweep** - A `TreeWalker` replaces every occurrence of the detected customer domain (e.g. `gazette.com`) with a fake domain (`demosite.test` by default) and every occurrence of the brand token derived from that domain (`gazette`) with the fake publisher name, across all text nodes. The brand token catches header labels the app builds from the account name, such as "The Gazette Sites - gazette.com".
+| On screen | What happens | Default |
+|---|---|---|
+| Customer name in text (headers such as “The Gazette Sites”) | Swept to the configured publisher name | Demo Network |
+| Customer domain in text and post-row URLs | Swept to the configured fake domain | demosite.test |
+| Headlines | Replaced from a local list of 228 paired headline/section entries, or scrambled | **Replace** |
+| Author names | Replaced from first/last name lists, or scrambled | **Replace** |
+| Section names | Replaced with the section paired to that row’s headline | Always replace |
+| Article thumbnails | Replaced from `assets/thumbnails/` (local JPEGs), or blurred | **Replace** |
+| Publisher name badge | Replaced with the configured publisher name | Demo Network |
+| Site picker field | Text made invisible | Always on |
+| SEO / Google key labels | Scrambled in place | Always scramble |
+| Page Views, Visitors, and other factoid numbers | Left as-is (they do not identify the customer) | Visible |
+| Chrome hover link preview | Dashboard links show `https://dash.parsely.com`; external links show `https://demosite.test` (or the configured fake domain) | **On** |
+| Tab address bar | Optional same-origin iframe so the tab stays `https://dash.parsely.com/` | **Off** (experimental) |
+| Clicks to the customer’s public site | Prompt: “This opens the real customer site.” Cancel stays on the dash; confirm opens at the top level | Always when anonymization is on |
 
-   Two limits apply. The token only matches when the brand renders as one word (`gazette` matches "The Gazette", but `dailyplanet` will not match "Daily Planet"). And the publisher name and domain you configure must not contain the customer id or brand token — a replacement that matches its own output would rewrite it on every cycle, so the sweep drops it and logs an error instead.
-2. **Href-pattern selectors** - Content like authors and sections is matched by URL structure rather than CSS classes, making it resilient to UI changes. Index and nav links (`/authors/?…`, `/authors/`) are excluded so product labels stay intact.
-3. **Structural selectors** - A few specific selectors handle elements where href matching isn't possible (image thumbnails, publisher name, site picker).
+Product navigation labels (Posts, Authors, Sections, Tags, Pages) are not rewritten. Author and section rules match profile URLs only, not `/authors/` or `/sections/` index links.
 
-Customer detection is automatic. The extension reads the domain from the Parse.ly dashboard URL and generates a consistent fake identity for it.
+**Replace vs scramble.** Replace uses a prepared list (headlines, names, or stock photos) and looks like a real dashboard. Scramble keeps length and first/last letters (`Emily Goodman` → something like `Ehxjy Gfrnhn`) and is harder to read. Thumbnails use replace or blur, not scramble.
+
+**Limits.** The brand-name sweep only matches a single word derived from the domain (`gazette` matches “The Gazette”; `dailyplanet` will not match “Daily Planet”). The publisher name and domain you configure must not contain the customer id or that brand token, or the sweep would rewrite its own output forever and is skipped. Displayed URLs may contain zero-width spaces around dots; the domain sweep allows those so `jefferies.com` is not reduced to `Demo Network.com`.
 
 ## Installation
 
@@ -24,26 +38,35 @@ Customer detection is automatic. The extension reads the domain from the Parse.l
 
 ## Extension Popup
 
-The popup provides these controls:
+All of these persist and apply live, without reloading the page.
 
-- **Anonymization** toggle (on/off)
-- **Hide hover links** toggle (on by default) — Chrome’s status-bar URL preview is rewritten to `http://dash.parsely.com`. Turn off to see the real hrefs while debugging.
-- **Hide address bar** toggle (off by default, experimental) — loads the dashboard in a same-origin iframe so the tab URL stays `https://dash.parsely.com/`. Turn it off if the frame stays blank or the app jumps out.
-- **Keep screen awake** toggle (for live demos)
-- **Show publisher name as** and **Show domain as** — the fake identity to display, not the customer values to look for (defaults: "Demo Network" / "demosite.test")
-- **Headline mode** (replace with generated headlines, or scramble existing ones)
-- **Author mode** (replace with generated names, or scramble existing ones)
-- **Thumbnail mode** (replace with local stock photos, or blur existing thumbnails). Defaults to replace.
+| Control | Default | Notes |
+|---|---|---|
+| **Anonymization** | On | Master switch |
+| **Hide hover links** | On | Rewrites Chrome’s status-bar preview as above. Turn off to inspect real hrefs while debugging |
+| **Hide address bar** | Off | Experimental. Frames the dash so the tab URL has no customer path. Turn off if the frame stays blank or the app jumps out |
+| **Keep screen awake** | On (new installs) | For live demos |
+| **Show publisher name as** | Demo Network | Fake identity shown on the page, not the value to search for |
+| **Show domain as** | demosite.test | IANA-reserved `.test` TLD. Also used for external hover previews |
+| **Headline mode** | Replace with random headlines | Or scramble existing headlines |
+| **Author mode** | Replace with random names | Or scramble existing names |
+| **Thumbnail mode** | Replace with local photos | Or blur existing thumbnails |
 
-All popup settings are persisted and applied live without reloading. Author mode defaults to replace.
+## How It Works
+
+Redaction happens in three layers, from broad to specific:
+
+1. **Global text sweep** — A `TreeWalker` replaces the detected customer domain with the fake domain and the brand token from that domain with the fake publisher name, across all text nodes. Domain patterns run first so the brand token cannot match inside an already-swapped domain.
+2. **Href-pattern selectors** — Authors and sections are matched by URL structure (`/authors/slug`, not `/authors/?…`), not CSS classes. Parse.ly class names change between deploys; URL structure does not.
+3. **Structural selectors** — Used only when href matching is not possible (thumbnails, publisher badge, site picker).
+
+`sweepHrefs` changes each `a[href]` for Chrome’s hover preview. The real destination is stored by the extension (keyed to the element, not an id on the tag). A capture-phase click listener navigates there. Inline `onclick` cannot do this — the page CSP blocks it.
 
 ## Configuration
 
 All transformation rules live in `content/config.json`.
 
 ### URL Patterns
-
-Define regex patterns to extract the customer ID from dashboard URLs:
 
 ```json
 "urlPatterns": {
@@ -56,94 +79,30 @@ Define regex patterns to extract the customer ID from dashboard URLs:
 
 ### Transformation Types
 
-**`functionReplace`** - Replace element text using a named JS function. Supports `preserveChildren` to only replace direct text nodes.
+**`functionReplace`** — Replace element text using a named JS function. Supports `preserveChildren` to only replace direct text nodes.
 
-```json
-{
-  "name": "authors_replace",
-  "type": "functionReplace",
-  "selectors": ["a[href*='/authors/']:not([href*='/authors/?']):not([href$='/authors/'])"],
-  "options": {
-    "functionName": "generateRandomAuthorName"
-  }
-}
-```
+**`scramble`** — Randomize existing text while preserving structure (case, punctuation, spacing, word length, first and last letters).
 
-**`scramble`** - Randomize existing text while preserving structure (case, punctuation, spacing, word length).
+**`blur`** — Apply a CSS blur filter. Images are scaled slightly so the blur does not reveal the backdrop at their edges. Used when Thumbnail mode is **blur**.
 
-```json
-{
-  "name": "seo_scramble",
-  "type": "scramble",
-  "selectors": ["div.google-key-label"],
-  "options": {
-    "preserveCase": true,
-    "preservePunctuation": true,
-    "preserveSpaces": true,
-    "preserveLength": true,
-    "preserveEnds": true
-  }
-}
-```
+**`defaultImage`** — Replace every matching `img` with a local stock photo from `assets/thumbnails/`. Customer thumbnails stay at `opacity: 0` until the `src` is a `chrome-extension://` URL. The pool file is chosen by hashing the original `src` (and skipping a repeat on the next row). Used when Thumbnail mode is **replace**.
 
-**`blur`** - Apply a CSS blur filter to any element. Images are also scaled slightly so the blur does not reveal the backdrop at their edges.
+`assets/thumbnails/index.json` is a JSON array of filenames, for example `["01.jpg", "02.jpg"]`. Add JPEGs there and list them in the index. `assets/*` is already in `web_accessible_resources`.
 
-```json
-{
-  "name": "article_images",
-  "type": "blur",
-  "selectors": ["div.thumb img"],
-  "options": { "blurAmount": "3px" }
-}
-```
-
-**`defaultImage`** - Replace every matching `img` with a local stock photo from `assets/thumbnails/`. Customer thumbnails stay at `opacity: 0` until the `src` is a `chrome-extension://` URL, so a branded image cannot paint. The pool file is chosen by hashing the original `src`, so the same article keeps the same stand-in across SPA re-renders.
-
-```json
-{
-  "name": "article_thumbnails",
-  "type": "defaultImage",
-  "selectors": ["div.thumb img"],
-  "options": {
-    "poolIndex": "assets/thumbnails/index.json"
-  }
-}
-```
-
-`index.json` is a JSON array of filenames in that directory, for example `["01.jpg", "02.jpg"]`. Add files there and list them in the index; they must also be covered by `web_accessible_resources` (the `assets/*` glob already does this).
+Headlines, authors, and thumbnails are switched from the popup with `enabledSetting` + `enabledValue` (`headlineMode`, `authorMode`, `thumbnailMode`). Do not add a per-setting message action.
 
 ### Available Replacement Functions
 
 | Function | Description |
 |---|---|
-| `generateRandomHeadline` | Returns a headline from `content/articles.js`, paired with its section per post row |
-| `generateRandomSectionName` | Returns the section from the same article entry as the headline |
-| `generateRandomAuthorName` | Generates a name from configurable first/last name lists |
-| `generatePublisherName` | Returns the configured publisher name |
-
-### Conditional Transformations
-
-Transformations can be toggled by a setting value. Headlines (`headlineMode`), author names (`authorMode`), and thumbnails (`thumbnailMode`) use this from the popup:
-
-```json
-{
-  "name": "headlines_replace",
-  "enabledSetting": "headlineMode",
-  "enabledValue": "replace",
-  ...
-}
-```
+| `generateRandomHeadline` | Next unused headline from `content/articles.js`, sticky per post row |
+| `generateRandomSectionName` | Section from the same article entry as that row’s headline |
+| `generateRandomAuthorName` | Random first + last name from the lists in `config.json` |
+| `generatePublisherName` | Configured publisher name |
 
 ## Content Data
 
-`content/articles.js` contains paired headline and section entries so that generated content stays contextually coherent within each post row:
-
-```json
-[
-  { "headline": "Severe Storms Sweep Northeast, Leaving Thousands Without Power", "section": "Weather" },
-  { "headline": "Tech Giants Face New Antitrust Push as Regulators Tighten Scrutiny", "section": "Technology" }
-]
-```
+`content/articles.js` contains paired `{ headline, section }` objects. When a post row gets a fake headline, it gets the matching section from the same entry.
 
 ## Project Structure
 
@@ -156,11 +115,12 @@ Transformations can be toggled by a setting value. Headlines (`headlineMode`), a
 ├── content/config.json         Transformation rules
 ├── content/articles.js         Paired headline + section data
 └── assets/                     Icons, CSS, stock thumbnail pool
+    └── thumbnails/             Local JPEGs + index.json
 ```
 
 ## Notes
 
 - All processing is local. No data leaves the browser.
-- Uses `MutationObserver` and continuous polling to handle Parse.ly's SPA navigation.
-- SPA URL changes are detected automatically, re-applying redaction when switching between customer sites.
-- The `.test` TLD is IANA-reserved, so fake domains can never collide with real ones.
+- `MutationObserver` and a short polling interval handle Parse.ly’s SPA navigation.
+- Switching customers in the site picker re-detects the domain and re-applies redaction.
+- The `.test` TLD is IANA-reserved, so fake domains cannot collide with real ones.

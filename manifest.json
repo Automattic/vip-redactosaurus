@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "VIP Redactosaurus",
-  "version": "1.0.0",
+  "version": "1.0.5",
   "description": "Anonymizes specific content on webpages before rendering to enable safe product demos",
   "permissions": [
     "activeTab",

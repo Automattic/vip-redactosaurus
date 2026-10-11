@@ -10,6 +10,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Stamp manifest version from tag
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          python3 -c "
+          import json, pathlib
+          path = pathlib.Path('manifest.json')
+          manifest = json.loads(path.read_text())
+          manifest['version'] = '''${version}'''
+          path.write_text(json.dumps(manifest, indent=2) + '\n')
+          "
       - run: zip -r redactosaurus.zip . -x ".git/*" ".github/*"
       - run: gh release create "$GITHUB_REF_NAME" redactosaurus.zip --generate-notes
         env:

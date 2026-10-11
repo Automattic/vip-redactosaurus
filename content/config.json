@@ -27,7 +27,10 @@
       "enabledValue": "replace",
       "selectors": [
         "a.post-title",
-        "a[href*='/campaigns/id/']"
+        "a[href*='/campaigns/id/']",
+        "div.title > h1",
+        "div.title > a[target=\"_blank\"] span",
+        ".card-node.post-node .title > a > div"
       ],
       "options": {
         "functionName": "generateRandomHeadline",
@@ -42,7 +45,10 @@
       "enabledValue": "scramble",
       "selectors": [
         "a.post-title",
-        "a[href*='/campaigns/id/']"
+        "a[href*='/campaigns/id/']",
+        "div.title > h1",
+        "div.title > a[target=\"_blank\"] span",
+        ".card-node.post-node .title > a > div"
       ],
       "options": {
         "preserveCase": true,
@@ -60,7 +66,8 @@
       "enabledSetting": "authorMode",
       "enabledValue": "scramble",
       "selectors": [
-        "a[href*='/authors/']:not([href*='/authors/?']):not([href$='/authors/'])"
+        "a[href*='/authors/']:not([href*='/authors/?']):not([href$='/authors/'])",
+        ".card-node.post-node .author > a"
       ],
       "options": {
         "preserveCase": true,
@@ -78,7 +85,8 @@
       "enabledSetting": "authorMode",
       "enabledValue": "replace",
       "selectors": [
-        "a[href*='/authors/']:not([href*='/authors/?']):not([href$='/authors/'])"
+        "a[href*='/authors/']:not([href*='/authors/?']):not([href$='/authors/'])",
+        ".card-node.post-node .author > a"
       ],
       "options": {
         "functionName": "generateRandomAuthorName",
@@ -96,10 +104,22 @@
       "name": "section_names",
       "type": "functionReplace",
       "selectors": [
-        "a[href*='/sections/']:not([href*='/sections/?']):not([href$='/sections/'])"
+        "a[href*='/sections/']:not([href*='/sections/?']):not([href$='/sections/'])",
+        ".card-node.post-node .section > a"
       ],
       "options": {
         "functionName": "generateRandomSectionName",
+        "functionArgs": {}
+      }
+    },
+    {
+      "name": "filter_summary_sections",
+      "type": "functionReplace",
+      "selectors": [
+        "#filters-summary-content .values"
+      ],
+      "options": {
+        "functionName": "generateRandomSectionList",
         "functionArgs": {}
       }
     },
@@ -145,7 +165,55 @@
       "name": "seo_scramble",
       "type": "scramble",
       "selectors": [
-        "div.google-key-label"
+        "div.google-key-label",
+        "div.keyword-container > div.keyword"
+      ],
+      "options": {
+        "preserveCase": true,
+        "preservePunctuation": true,
+        "preserveSpaces": true,
+        "preserveLength": true,
+        "preserveEnds": true
+      }
+    },
+    {
+      "name": "goals_scramble",
+      "type": "scramble",
+      "selectors": [
+        "div.goals-listings .goal-card-name",
+        "div.goal-listing .name",
+        "div.modal-body .goal-name",
+        "#tooltip"
+      ],
+      "options": {
+        "preserveCase": true,
+        "preservePunctuation": true,
+        "preserveSpaces": true,
+        "preserveLength": true,
+        "preserveEnds": true
+      }
+    },
+    {
+      "name": "journeys_labels",
+      "type": "scramble",
+      "selectors": [
+        ".card-node-row--val-container.label a"
+      ],
+      "options": {
+        "preserveCase": true,
+        "preservePunctuation": true,
+        "preserveSpaces": true,
+        "preserveLength": true,
+        "preserveEnds": true
+      }
+    },
+    {
+      "name": "site_picker_scramble",
+      "type": "scramble",
+      "selectors": [
+        "#popups .publisher .site-name-text span",
+        "#popups .apikey .site-name-text span",
+        "#popups .apikey-group .site-name-text span"
       ],
       "options": {
         "preserveCase": true,

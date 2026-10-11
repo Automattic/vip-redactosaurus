@@ -208,7 +208,7 @@
   }
 
   function getArticleForElement(element) {
-    const row = element.closest('.post-row');
+    const row = element.closest('.post-row') || element.closest('.post-info-metas') || element.closest('.post-node');
     const key = row || element;
 
     if (elementArticleMap.has(key)) {
@@ -232,6 +232,24 @@
     generateRandomSectionName: async function(args, element) {
       await loadArticles();
       return getArticleForElement(element).section;
+    },
+
+    generateRandomSectionList: async function(args, element) {
+      await loadArticles();
+      const label = element.previousElementSibling?.textContent || '';
+      if (!/section/i.test(label)) {
+        return element.textContent;
+      }
+
+      const count = Math.max(
+        element.textContent.split(',').map(part => part.trim()).filter(Boolean).length,
+        1
+      );
+      return Array.from({ length: count }, () => {
+        const article = articles[articleIndex % articles.length];
+        articleIndex++;
+        return article.section;
+      }).join(', ');
     },
 
     generatePublisherName: function() {
@@ -1031,19 +1049,47 @@
   }
 
   // Chrome's link-preview status bar reads href on hover and cannot be turned
-  // off. A swapped fake domain still leaks path slugs (author names). Every
-  // link is shown as the dash origin; the real destination is kept off-DOM.
-  // Inline onclick is blocked by the page CSP. Vue can restore href, so this
-  // re-runs every cycle.
-  const STATUS_BAR_HREF = 'http://dash.parsely.com';
+  // off. Paths leak author slugs, so previews are origin-only: dashboard links
+  // show the dash host, external links show the fake publisher domain. The real
+  // destination is kept off-DOM. Vue can restore href, so this re-runs every cycle.
+  const STATUS_BAR_DASH = 'https://dash.parsely.com';
+
+  function isInternalDashUrl(href) {
+    try {
+      const host = new URL(href, location.href).hostname;
+      return host === 'dash.parsely.com' || host === 'app.parsely.com' || host.endsWith('.parsely.com');
+    } catch (err) {
+      return false;
+    }
+  }
+
+  function statusBarPreviewHref(realHref) {
+    return isInternalDashUrl(realHref) ? STATUS_BAR_DASH : `https://${FAKE_IDENTITY.domain}`;
+  }
+
+  function isPreviewHref(href) {
+    if (!href) return false;
+    if (/^https?:\/\/dash\.parsely\.com\/?$/.test(href)) return true;
+    const hosts = [FAKE_IDENTITY.domain];
+    if (previousFakeDomain) hosts.push(previousFakeDomain);
+    return hosts.some(host => href === `https://${host}` || href === `https://${host}/`);
+  }
 
   function sweepAnchorHref(anchor) {
     if (!anchor || !isEnabled || !hideHoverLinks) return;
     const href = anchor.getAttribute('href');
     if (!href || href.startsWith('javascript:') || href.charAt(0) === '#') return;
-    if (href === STATUS_BAR_HREF) return;
+
+    if (isPreviewHref(href)) {
+      if (!originalHref.has(anchor)) return;
+      const preview = statusBarPreviewHref(originalHref.get(anchor));
+      if (href !== preview) anchor.setAttribute('href', preview);
+      return;
+    }
+
     originalHref.set(anchor, anchor.href);
-    anchor.setAttribute('href', STATUS_BAR_HREF);
+    const preview = statusBarPreviewHref(anchor.href);
+    if (href !== preview) anchor.setAttribute('href', preview);
   }
 
   function sweepHrefs() {
@@ -1065,17 +1111,8 @@
     const anchor = el?.closest('a');
     if (!anchor) return null;
     const real = originalHref.get(anchor) || anchor.href;
-    if (!real || real.startsWith('javascript:') || real === '#' || real === STATUS_BAR_HREF) return null;
+    if (!real || real.startsWith('javascript:') || real === '#' || isPreviewHref(real)) return null;
     return { anchor, real };
-  }
-
-  function isInternalDashUrl(href) {
-    try {
-      const host = new URL(href, location.href).hostname;
-      return host === 'dash.parsely.com' || host === 'app.parsely.com' || host.endsWith('.parsely.com');
-    } catch (err) {
-      return false;
-    }
   }
 
   function leaveDashboard(url, newTab) {

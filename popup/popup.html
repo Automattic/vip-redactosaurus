@@ -155,7 +155,7 @@
 
   <div class="section">
     <div class="row">
-      <span class="row-label">Anonymization</span>
+      <span class="row-label">Anonymize screens</span>
       <div class="toggle" id="toggleSwitch"></div>
     </div>
     <div class="row">
@@ -173,22 +173,8 @@
   </div>
 
   <div class="section">
-    <div class="section-title">Show this instead</div>
-    <p class="hint">
-      The real customer name and domain are detected from the page automatically. Add a custom name and domain or just eave these blank to use the defaults.
-    </p>
-    <div class="field">
-      <label>Show publisher name as</label>
-      <input type="text" id="publisherName" placeholder="Demo Network">
-    </div>
-    <div class="field">
-      <label>Show domain as</label>
-      <input type="text" id="publisherDomain" placeholder="demosite.test">
-    </div>
-  </div>
+    <div class="section-title">Options</div>
 
-  <div class="section">
-    <div class="section-title">Article content</div>
     <div class="field">
       <label>Headline mode</label>
       <select data-setting="headlineMode">
@@ -210,7 +196,17 @@
         <option value="blur">Blur existing thumbnails</option>
       </select>
     </div>
-  </div>
+    <p class="hint">
+      The customer name and domain are detected from the page and replaced automatically.
+    </p>
+    <div class="field">
+      <label>Show publisher name as</label>
+      <input type="text" id="publisherName" placeholder="Demo Network">
+    </div>
+    <div class="field">
+      <label>Show domain as</label>
+      <input type="text" id="publisherDomain" placeholder="demosite.test">
+    </div>  </div>
 
   <div class="status-bar" id="status">Loading...</div>
 
