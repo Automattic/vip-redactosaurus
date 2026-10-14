@@ -84,6 +84,14 @@
 
     .toggle.active::after { transform: translateX(18px); }
 
+    .toggle.disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+      pointer-events: none;
+    }
+
+    .row.disabled .row-label { color: #666; }
+
     .section-title {
       font-size: 12px;
       font-weight: 600;

@@ -25,13 +25,8 @@ document.addEventListener('DOMContentLoaded', function() {
   publisherDomainInput.addEventListener('change', handlePublisherChange);
 
   document.addEventListener('visibilitychange', async () => {
-    if (document.visibilityState === 'visible' && wakeLockEnabled && !wakeLock) {
-      try {
-        if ('wakeLock' in navigator) {
-          wakeLock = await navigator.wakeLock.request('screen');
-          wakeLock.addEventListener('release', () => { wakeLock = null; wakeLockEnabled = false; updateUI(); });
-        }
-      } catch (e) { /* ignore */ }
+    if (document.visibilityState === 'visible' && isEnabled && wakeLockEnabled && !wakeLock) {
+      await acquireWakeLock();
     }
   });
 
@@ -55,9 +50,26 @@ document.addEventListener('DOMContentLoaded', function() {
     }
   }
 
+  async function acquireWakeLock() {
+    if (!('wakeLock' in navigator)) return;
+    wakeLock = await navigator.wakeLock.request('screen');
+    wakeLock.addEventListener('release', () => { wakeLock = null; updateUI(); });
+  }
+
+  async function releaseWakeLock() {
+    if (!wakeLock) return;
+    await wakeLock.release();
+    wakeLock = null;
+  }
+
   async function handleToggle() {
     const newState = !isEnabled;
     isEnabled = newState;
+    if (!newState) {
+      await releaseWakeLock();
+    } else if (wakeLockEnabled) {
+      try { await acquireWakeLock(); } catch (e) { /* ignore */ }
+    }
     updateUI();
 
     try {
@@ -69,6 +81,7 @@ document.addEventListener('DOMContentLoaded', function() {
   }
 
   async function handleHideHoverLinksToggle() {
+    if (!isEnabled) return;
     const newState = !hideHoverLinks;
     hideHoverLinks = newState;
     updateUI();
@@ -82,6 +95,7 @@ document.addEventListener('DOMContentLoaded', function() {
   }
 
   async function handleEmbedInIframeToggle() {
+    if (!isEnabled) return;
     const newState = !embedInIframe;
     embedInIframe = newState;
     updateUI();
@@ -95,17 +109,15 @@ document.addEventListener('DOMContentLoaded', function() {
   }
 
   async function handleWakeLockToggle() {
+    if (!isEnabled) return;
     const newState = !wakeLockEnabled;
 
     try {
       if (newState) {
-        if ('wakeLock' in navigator) {
-          wakeLock = await navigator.wakeLock.request('screen');
-          wakeLock.addEventListener('release', () => { wakeLock = null; wakeLockEnabled = false; updateUI(); });
-          wakeLockEnabled = true;
-        }
+        await acquireWakeLock();
+        wakeLockEnabled = true;
       } else {
-        if (wakeLock) { await wakeLock.release(); wakeLock = null; }
+        await releaseWakeLock();
         wakeLockEnabled = false;
       }
       updateUI();
@@ -139,11 +151,17 @@ document.addEventListener('DOMContentLoaded', function() {
     } catch (e) { /* ignore */ }
   }
 
+  function setDependentToggle(el, on) {
+    el.classList.toggle('active', isEnabled && on);
+    el.classList.toggle('disabled', !isEnabled);
+    el.parentElement.classList.toggle('disabled', !isEnabled);
+  }
+
   function updateUI() {
     toggleSwitch.classList.toggle('active', isEnabled);
-    hideHoverLinksSwitch.classList.toggle('active', hideHoverLinks);
-    embedInIframeSwitch.classList.toggle('active', embedInIframe);
-    wakeLockSwitch.classList.toggle('active', wakeLockEnabled);
+    setDependentToggle(hideHoverLinksSwitch, hideHoverLinks);
+    setDependentToggle(embedInIframeSwitch, embedInIframe);
+    setDependentToggle(wakeLockSwitch, wakeLockEnabled);
     status.textContent = isEnabled ? 'Active' : 'Inactive';
     status.className = `status-bar ${isEnabled ? 'active' : 'inactive'}`;
   }
@@ -160,6 +178,7 @@ document.addEventListener('DOMContentLoaded', function() {
   chrome.runtime.onMessage.addListener((request) => {
     if (request.action === 'statusUpdate') {
       isEnabled = request.enabled;
+      if (!isEnabled) releaseWakeLock();
       updateUI();
     }
   });
